@@ -1,0 +1,161 @@
+<h1 align="center">
+  <br>
+  🎵 EchoBox II
+  <br>
+</h1>
+
+<h4 align="center">Современный музыкальный плеер на Qt 6 с визуализатором, Discord RPC и выводом музыки в микрофон</h4>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Qt-6.11.1-41CD52?style=for-the-badge&logo=qt&logoColor=white"/>
+  <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white"/>
+  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge"/>
+</p>
+
+<p align="center">
+  <a href="#возможности">Возможности</a> •
+  <a href="#скриншоты">Скриншоты</a> •
+  <a href="#установка">Установка</a> •
+  <a href="#сборка">Сборка</a> •
+  <a href="#горячие-клавиши">Горячие клавиши</a>
+</p>
+
+---
+
+## Скриншоты
+
+<p align="center">
+  <img src="assets/preview.png" alt="EchoBox II — главное окно" width="780"/>
+</p>
+
+---
+
+## Возможности
+
+### Воспроизведение
+- **Форматы**: MP3, FLAC, WAV, OGG, M4A, AAC, OPUS, WMA, MP4, MKV и другие
+- **Плейлисты**: несколько вкладок, переименование и удаление, сохранение/загрузка M3U / M3U8
+- **Режимы повтора**: выкл / один трек / весь плейлист
+- **Перемешивание** (shuffle)
+- **Скорость воспроизведения**: 0.5× — 2.0×
+- **Кроссфейд** между треками (0–10 с)
+- **Память позиции**: продолжает с места остановки
+
+### Интерфейс
+- **Две темы**: Catppuccin Mocha (тёмная) и Catppuccin Latte (светлая)
+- **Визуализатор** на основе FFT (22 полосы) — в главном и мини-окне
+- **Мини-плеер** (F11) — компактный оверлей с визуализатором и управлением
+- **Обложка альбома** — скруглённая, квадратная или круглая
+- **Иконки треков** рядом с названием в плейлисте
+- **Системный трей** с управлением воспроизведением
+- **Всегда сверху** (pinned window)
+
+### Аудио
+- **Регулировка громкости** с индикатором процента
+- **Отображение оставшегося времени** (нажать на таймер)
+- **Вывод музыки в микрофон** — слушатели в Discord / Roblox / любом войсе слышат твою музыку без смены устройства
+
+### Интеграции
+- **Discord Rich Presence** — показывает текущий трек в статусе
+- **Drag & Drop** файлов и папок
+- **Недавние файлы** в меню
+
+---
+
+## Вывод музыки в микрофон
+
+EchoBox II умеет передавать и твой голос, и музыку в войс-чат (Discord, Roblox и др.) без переключения микрофона.
+
+**Настройка (один раз):**
+1. Установи [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) — бесплатный виртуальный аудиодрайвер
+2. В Roblox / Discord выбери микрофон **CABLE Output (VB-Audio Virtual Cable)**
+3. В EchoBox нажми кнопку 🎙 → выбери **CABLE Input (VB-Audio Virtual Cable)**
+
+После этого твой голос и музыка автоматически идут в войс. Ничего переключать не нужно.
+
+---
+
+## Установка
+
+### Требования
+- Windows 10 / 11 (64-bit)
+- [Qt 6.11.1 MinGW 64-bit](https://www.qt.io/download-qt-installer)
+- CMake 3.19+
+
+### Готовые сборки
+> Скачай последний релиз со страницы [Releases](../../releases)
+
+---
+
+## Сборка
+
+```bash
+# Клонируй репозиторий
+git clone https://github.com/BANANCHIKIREAL/EchoBox-II.git
+cd EchoBox-II
+
+# Настрой через Qt Creator или CMake
+cmake -B build -DCMAKE_PREFIX_PATH="D:/Qt/6.11.1/mingw_64"
+cmake --build build
+```
+
+Или просто открой `CMakeLists.txt` в **Qt Creator** и нажми Run.
+
+---
+
+## Горячие клавиши
+
+| Клавиша | Действие |
+|---------|----------|
+| `Space` | Играть / Пауза |
+| `←` / `→` | Перемотка −5 / +5 сек |
+| `Ctrl+←` / `Ctrl+→` | Предыдущий / Следующий трек |
+| `↑` / `↓` | Громкость +5% / −5% |
+| `M` | Mute |
+| `F11` | Мини-плеер |
+| `Delete` | Удалить трек из плейлиста |
+| `Ctrl+O` | Открыть файлы |
+| `Ctrl+S` | Сохранить плейлист |
+| `Ctrl+L` | Загрузить плейлист |
+| `Ctrl+Q` | Выход |
+
+---
+
+## Структура проекта
+
+```
+EchoBox-II/
+├── src/
+│   ├── main.cpp
+│   ├── mainwindow.h / .cpp   — главное окно, вся логика
+│   ├── settingsdialog.h / .cpp
+│   ├── visualizer.h / .cpp   — FFT-визуализатор
+│   ├── backgroundwidget.h / .cpp
+│   ├── discordrpc.h / .cpp
+│   └── icons.h               — векторные иконки через QPainter
+├── assets/
+│   └── preview.png
+├── CMakeLists.txt
+└── README.md
+```
+
+---
+
+## Технологии
+
+| | |
+|---|---|
+| **UI фреймворк** | Qt 6.11.1 Widgets |
+| **Мультимедиа** | Qt Multimedia (QMediaPlayer, QAudioSink, QAudioSource) |
+| **Аудио-анализ** | QAudioBufferOutput + собственный FFT |
+| **Визуализатор** | QPainter + QTimer |
+| **Discord RPC** | discord-rpc (native) |
+| **Язык** | C++17 |
+| **Сборка** | CMake + MinGW 64-bit |
+
+---
+
+## Лицензия
+
+MIT © [BANANCHIKIREAL](https://github.com/BANANCHIKIREAL)
