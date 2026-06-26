@@ -1,6 +1,8 @@
 #include "mainwindow.h"
+#include "waveformslider.h"
 #include "visualizer.h"
 #include "backgroundwidget.h"
+#include <cmath>
 #include "logo.h"
 #include "icons.h"
 #include "discordrpc.h"
@@ -366,7 +368,7 @@ void MainWindow::setupUi() {
     rl->addSpacing(8);
 
     // ── Seek bar ──────────────────────────────────────────────────────────────
-    m_seekSlider = new QSlider(Qt::Horizontal, this);
+    m_seekSlider = new WaveformSlider(this);
     m_seekSlider->setRange(0, 0);
     m_seekSlider->setObjectName("seekSlider");
 
@@ -526,10 +528,10 @@ void MainWindow::setupUi() {
     miniExpand->setIcon(Ico::expand(mc, 13)); miniExpand->setIconSize({13,13});
     miniExpand->setToolTip("Полный режим  F11");
 
-    m_miniVisualizer = new Visualizer(this);
-    m_miniVisualizer->setFixedHeight(36);
-    m_miniVisualizer->setMinimumWidth(80);
-    m_miniVisualizer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_miniWaveform = new WaveformSlider(this);
+    m_miniWaveform->setFixedHeight(36);
+    m_miniWaveform->setMinimumWidth(80);
+    m_miniWaveform->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     miniL->addWidget(m_miniAlbumArt);
     miniL->addSpacing(2);
@@ -537,7 +539,7 @@ void MainWindow::setupUi() {
     miniL->addWidget(m_miniPlayBtn);
     miniL->addWidget(miniNext);
     miniL->addWidget(m_miniTitle);
-    miniL->addWidget(m_miniVisualizer, 1);
+    miniL->addWidget(m_miniWaveform, 1);
     miniL->addWidget(m_miniShuffleBtn);
     miniL->addWidget(m_miniRepeatBtn);
     miniL->addSpacing(4);
@@ -704,9 +706,16 @@ void MainWindow::setupConnections() {
     connect(m_speedCombo,   QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::onSpeedChanged);
 
-    connect(m_seekSlider, &QSlider::sliderPressed,  [this]{ m_seeking = true; });
-    connect(m_seekSlider, &QSlider::sliderReleased, [this]{
+    connect(m_seekSlider, &WaveformSlider::sliderPressed,  [this]{ m_seeking = true; });
+    connect(m_seekSlider, &WaveformSlider::sliderReleased, [this]{
         m_player->setPosition(m_seekSlider->value());
+        m_seeking = false;
+    });
+    // Share peaks and keep mini waveform in sync
+    connect(m_seekSlider, &WaveformSlider::peaksReady, m_miniWaveform, &WaveformSlider::setPeaks);
+    connect(m_miniWaveform, &WaveformSlider::sliderPressed,  [this]{ m_seeking = true; });
+    connect(m_miniWaveform, &WaveformSlider::sliderReleased, [this]{
+        m_player->setPosition(m_miniWaveform->value());
         m_seeking = false;
     });
     m_timeLabel->installEventFilter(this);
@@ -753,13 +762,6 @@ void MainWindow::applyTheme() {
     // Checked bg: dark panel tinted with accent
     const QColor acBg(qMax(0,ac.red()/5+0x18), qMax(0,ac.green()/5+0x14), qMax(0,ac.blue()/5+0x28));
     const QString acBgH = acBg.name();
-    // Latte accent variants
-    const QString acLL = ac.lighter(118).name();
-    const QColor acLatteBg(
-        qMin(255, 0xe5 - (0xcb - ac.red())/3),
-        qMin(255, 0xd8 - (0xa6 - ac.green())/3),
-        qMin(255, 0xfc - (0xf7 - ac.blue())/3));
-    const QString acLBgH = acLatteBg.name();
 
     // Font size
     const int fs = m_cfg.fontSizeIdx == 0 ? 11 : m_cfg.fontSizeIdx == 2 ? 15 : 13;
@@ -875,12 +877,12 @@ void MainWindow::applyTheme() {
         }
         QToolButton#smallBtn:hover { background-color: #45475a; color: #cdd6f4; }
 
-        QSlider#seekSlider { min-height: 20px; }
-        QSlider#seekSlider::groove:horizontal {
+        QSlider#seekSlider_unused { min-height: 20px; }
+        QSlider#seekSlider_unused::groove:horizontal {
             height: 5px; background: #313244; border-radius: 3px;
         }
-        QSlider#seekSlider::sub-page:horizontal { background: #89b4fa; border-radius: 3px; }
-        QSlider#seekSlider::handle:horizontal {
+        QSlider#seekSlider_unused::sub-page:horizontal { background: #89b4fa; border-radius: 3px; }
+        QSlider#seekSlider_unused::handle:horizontal {
             background: #cdd6f4;
             width: 14px; height: 14px;
             margin: -5px 0;
@@ -1077,75 +1079,14 @@ void MainWindow::applyTheme() {
 
     setStyleSheet(ss);
 
-    // Latte overrides
-    if (m_cfg.theme == "latte") setStyleSheet(styleSheet() + QString(R"(
-        QWidget { color: #4c4f69; }
-        QWidget#topWidget    { background-color: rgba(220, 224, 232, 215); }
-        QWidget#playlistPanel{ background-color: rgba(210, 215, 225, 210); }
-        QWidget#miniBar      { background-color: #dce0e8; }
-        QMenuBar             { background-color: #e6e9ef; color: #4c4f69; border-bottom: 1px solid #bcc0cc; }
-        QMenuBar::item:selected { background-color: #bcc0cc; }
-        QMenu { background-color: #eff1f5; border: 1px solid #acb0be; }
-        QMenu::item:selected { background-color: #ccd0da; }
-        QMenu::item:disabled { color: #acb0be; }
-        QLabel#titleLabel    { color: LACCENTL; }
-        QLabel#artistLabel   { color: #5c5f77; }
-        QLabel#albumLabel    { color: #9ca0b0; }
-        QLabel#timeLabel, QLabel#volLabel, QLabel#miniTitle { color: #5c5f77; }
-        QLabel#playlistInfo  { color: #8c8fa1; }
-        QLabel#miniAlbumArt  { background-color: #ccd0da; }
-        QWidget#mediaStack   { background-color: #e6e9ef; }
-        QToolButton#ctrlBtn  { background-color: #ccd0da; color: #4c4f69; }
-        QToolButton#ctrlBtn:hover   { background-color: #bcc0cc; }
-        QToolButton#playBtn  { background-color: LACCENT; color: #eff1f5; }
-        QToolButton#playBtn:hover   { background-color: LACCENTL; }
-        QToolButton#toggleBtn { background-color: #dce0e8; color: #6c6f85; border-color: #acb0be; }
-        QToolButton#toggleBtn:checked { background-color: LBGCHK; color: LACCENT; border-color: LACCENT; }
-        QToolButton#muteBtn  { color: #4c4f69; }
-        QToolButton#smallBtn { background-color: #ccd0da; color: #6c6f85; }
-        QToolButton#smallBtn:hover { background-color: #bcc0cc; color: #4c4f69; }
-        QSlider#seekSlider::groove:horizontal { background: #bcc0cc; }
-        QSlider#seekSlider::sub-page:horizontal { background: #1e66f5; }
-        QSlider#seekSlider::handle:horizontal { background: #4c4f69; }
-        QSlider#volSlider::groove:horizontal  { background: #bcc0cc; }
-        QSlider#volSlider::sub-page:horizontal{ background: #40a02b; }
-        QSlider#volSlider::handle:horizontal  { background: #4c4f69; }
-        QListWidget#playlist { background-color: #e6e9ef; border-color: #bcc0cc; alternate-background-color: #eff1f5; }
-        QListWidget#playlist::item:selected { background-color: #bcc0cc; color: LACCENT; }
-        QListWidget#playlist::item:hover:!selected { background-color: #ccd0da; }
-        QLineEdit#searchEdit { background-color: #e6e9ef; border-color: #bcc0cc; color: #4c4f69; }
-        QLineEdit#searchEdit:focus { border-color: #1e66f5; }
-        QComboBox#speedCombo { background-color: #ccd0da; border-color: #acb0be; color: #4c4f69; }
-        QStatusBar { background-color: #e6e9ef; color: #8c8fa1; border-top: 1px solid #bcc0cc; }
-        QScrollBar:vertical, QScrollBar:horizontal { background: #dce0e8; }
-        QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: #acb0be; }
-        QTabBar#playlistTabBar::tab { background-color: #dce0e8; color: #6c6f85; border-color: #bcc0cc; }
-        QTabBar#playlistTabBar::tab:selected { background-color: #ccd0da; color: LACCENT; border-color: #acb0be; }
-        QTabBar#playlistTabBar::tab:hover:!selected { background-color: #d0d4df; color: #4c4f69; }
-        QFrame#separator { background: #bcc0cc; }
-        QMessageBox, QDialog { background-color: #eff1f5; color: #4c4f69; }
-        QPushButton { background-color: #ccd0da; color: #4c4f69; border: 1px solid #acb0be; border-radius: 5px; padding: 5px 14px; }
-        QPushButton:hover { background-color: #bcc0cc; }
-        QPushButton:pressed { background-color: #acb0be; }
-        QGroupBox { color: #4c4f69; border: 1px solid #bcc0cc; border-radius: 6px; margin-top: 8px; padding-top: 6px; }
-        QGroupBox::title { color: #5c5f77; }
-        QRadioButton, QCheckBox { color: #4c4f69; }
-    )")
-    .replace("LACCENT",  acH)
-    .replace("LACCENTL", acLL)
-    .replace("LBGCHK",   acLBgH)
-    );
 
     // Art shape — radius applied directly to pixmap in updateAlbumArt/onMetaDataChanged
-    m_mediaStack->setStyleSheet(
-        QString("QWidget#mediaStack{background-color:%1;}")
-        .arg(m_cfg.theme == "latte" ? "#e6e9ef" : "#181825"));
-    updateAlbumArt(); // re-render placeholder with new radius
+    m_mediaStack->setStyleSheet("QWidget#mediaStack{background-color:#181825;}");
+    updateAlbumArt();
 
     // Visibility
-    if (m_aurora)          m_aurora->setLightMode(m_cfg.theme == "latte");
-    if (m_visualizer)      m_visualizer->setVisible(m_cfg.showVisualizer);
-    if (m_miniVisualizer)  m_miniVisualizer->setVisible(m_cfg.showVisualizer);
+    if (m_aurora) m_aurora->setLightMode(false);
+    if (m_visualizer)  m_visualizer->setVisible(m_cfg.showVisualizer);
     statusBar()->setVisible(m_cfg.showStatusBar);
 
     // Update font size
@@ -1172,6 +1113,11 @@ void MainWindow::applyTheme() {
 
     // Repaint playlist viewport so item icons remain visible after stylesheet change
     if (m_playlistWidget) m_playlistWidget->viewport()->update();
+
+    const QColor wAccent(0xcb, 0xa6, 0xf7);
+    const QColor wTrack (0x45, 0x47, 0x5a);
+    if (m_seekSlider)  { m_seekSlider->setAccentColor(wAccent); m_seekSlider->setTrackColor(wTrack); }
+    if (m_miniWaveform){ m_miniWaveform->setAccentColor(wAccent); m_miniWaveform->setTrackColor(wTrack); }
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────
@@ -1387,6 +1333,7 @@ void MainWindow::clearPlaylist() {
     m_titleLabel->setText("EchoBox II");
     m_artistLabel->setText("Перетащи файлы или открой через меню Файл");
     m_albumLabel->setText("");
+    m_seekSlider->clearWaveform();
     m_seekSlider->setValue(0); m_seekSlider->setRange(0, 0);
     m_timeLabel->setText("0:00 / 0:00");
     setWindowTitle("EchoBox II");
@@ -1742,6 +1689,9 @@ void MainWindow::toggleRemainingTime() {
 
 void MainWindow::onDurationChanged(qint64 duration) {
     m_seekSlider->setRange(0, static_cast<int>(duration));
+    m_miniWaveform->setRange(0, static_cast<int>(duration));
+    if (duration > 0)
+        m_seekSlider->loadWaveform(m_player->source(), duration);
     updateTimeDisplay(m_player->position(), duration);
 
     // Store duration in list item
@@ -1752,7 +1702,10 @@ void MainWindow::onDurationChanged(qint64 duration) {
 }
 
 void MainWindow::onPositionChanged(qint64 position) {
-    if (!m_seeking) m_seekSlider->setValue(static_cast<int>(position));
+    if (!m_seeking) {
+        m_seekSlider->setValue(static_cast<int>(position));
+        m_miniWaveform->setValue(static_cast<int>(position));
+    }
     updateTimeDisplay(position, m_player->duration());
 
     // Crossfade fade-out
@@ -1777,7 +1730,6 @@ void MainWindow::onPlaybackStateChanged(QMediaPlayer::PlaybackState state) {
     m_playPauseBtn->setIcon(playing ? Ico::pause(iconC, 30) : Ico::play(iconC, 30));
     m_miniPlayBtn->setIcon(playing  ? Ico::pause(iconC, 22) : Ico::play(iconC, 22));
     m_visualizer->setActive(playing);
-    if (m_miniVisualizer) m_miniVisualizer->setActive(playing);
     if (m_trayPlayAct) m_trayPlayAct->setText(playing ? "⏸  Пауза" : "▶  Играть");
     if (m_discord && m_cfg.discordEnabled)
         m_discord->updateActivity(m_titleLabel->text(), m_artistLabel->text(), playing);
@@ -1866,7 +1818,15 @@ void MainWindow::onError(QMediaPlayer::Error /*e*/, const QString &msg) {
 
 void MainWindow::onAudioBuffer(const QAudioBuffer &buffer) {
     m_visualizer->feedAudioBuffer(buffer);
-    if (m_miniVisualizer) m_miniVisualizer->feedAudioBuffer(buffer);
+
+    // Compute RMS amplitude and feed aurora background
+    if (m_aurora) {
+        const float *data  = buffer.constData<float>();
+        const int    total = buffer.frameCount() * buffer.format().channelCount();
+        float rms = 0.f;
+        for (int i = 0; i < total; ++i) rms += data[i] * data[i];
+        if (total > 0) m_aurora->setAmplitude(std::sqrt(rms / total));
+    }
 
     // Buffer music data for mic mixer tick to consume
     if (m_micRouting && !m_micDevice.id().isEmpty())
@@ -2054,8 +2014,12 @@ void MainWindow::loadPlaylistState(int index) {
         setCurrentTrackVisual(m_currentIndex);
 
     updatePlaylistInfo();
+    m_seekSlider->clearWaveform();
+    m_miniWaveform->clearWaveform();
     m_seekSlider->setValue(0);
     m_seekSlider->setRange(0, 0);
+    m_miniWaveform->setValue(0);
+    m_miniWaveform->setRange(0, 0);
     m_timeLabel->setText("0:00 / 0:00");
     m_coverPixmap = QPixmap();
     updateAlbumArt();

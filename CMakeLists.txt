@@ -23,6 +23,8 @@ qt_add_executable(EchoBoxII
     src/discordrpc.cpp
     src/settingsdialog.h
     src/settingsdialog.cpp
+    src/waveformslider.h
+    src/waveformslider.cpp
 )
 
 target_link_libraries(EchoBoxII PRIVATE
