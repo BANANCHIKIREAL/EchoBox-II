@@ -4,11 +4,21 @@
 #include <QPainter>
 #include <QPen>
 #include <QPolygonF>
+#include <QGuiApplication>
 
 namespace Ico {
 
+// Creates a high-DPI aware pixmap for the given logical size
+inline QPixmap makePixmap(int sz) {
+    const qreal dpr = qGuiApp->devicePixelRatio();
+    QPixmap pm(qRound(sz * dpr), qRound(sz * dpr));
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    return pm;
+}
+
 inline QIcon play(QColor c, int sz = 24) {
-    QPixmap pm(sz, sz); pm.fill(Qt::transparent);
+    QPixmap pm = makePixmap(sz);
     QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen); p.setBrush(c);
     QPolygonF t;
@@ -18,7 +28,7 @@ inline QIcon play(QColor c, int sz = 24) {
 }
 
 inline QIcon pause(QColor c, int sz = 24) {
-    QPixmap pm(sz, sz); pm.fill(Qt::transparent);
+    QPixmap pm = makePixmap(sz);
     QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen); p.setBrush(c);
     const int bw = qRound(sz*0.25), bh = qRound(sz*0.68), by = qRound(sz*0.16);
@@ -28,7 +38,7 @@ inline QIcon pause(QColor c, int sz = 24) {
 }
 
 inline QIcon stop(QColor c, int sz = 24) {
-    QPixmap pm(sz, sz); pm.fill(Qt::transparent);
+    QPixmap pm = makePixmap(sz);
     QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen); p.setBrush(c);
     const int m = qRound(sz * 0.20);
@@ -37,7 +47,7 @@ inline QIcon stop(QColor c, int sz = 24) {
 }
 
 inline QIcon prev(QColor c, int sz = 24) {
-    QPixmap pm(sz, sz); pm.fill(Qt::transparent);
+    QPixmap pm = makePixmap(sz);
     QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen); p.setBrush(c);
     p.drawRoundedRect(qRound(sz*0.10), qRound(sz*0.15), qRound(sz*0.17), qRound(sz*0.70), 2, 2);
@@ -48,7 +58,7 @@ inline QIcon prev(QColor c, int sz = 24) {
 }
 
 inline QIcon next(QColor c, int sz = 24) {
-    QPixmap pm(sz, sz); pm.fill(Qt::transparent);
+    QPixmap pm = makePixmap(sz);
     QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen); p.setBrush(c);
     QPolygonF t;
@@ -59,7 +69,7 @@ inline QIcon next(QColor c, int sz = 24) {
 }
 
 inline QIcon volume(int level, QColor c, int sz = 24) {
-    QPixmap pm(sz, sz); pm.fill(Qt::transparent);
+    QPixmap pm = makePixmap(sz);
     QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen); p.setBrush(c);
     QPolygonF cone;
@@ -83,7 +93,7 @@ inline QIcon volume(int level, QColor c, int sz = 24) {
 }
 
 inline QIcon shuffle(QColor c, int sz = 24) {
-    QPixmap pm(sz, sz); pm.fill(Qt::transparent);
+    QPixmap pm = makePixmap(sz);
     QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
     QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     p.setPen(pen); p.setBrush(Qt::NoBrush);
@@ -102,7 +112,7 @@ inline QIcon shuffle(QColor c, int sz = 24) {
 }
 
 inline QIcon repeatAll(QColor c, int sz = 24) {
-    QPixmap pm(sz, sz); pm.fill(Qt::transparent);
+    QPixmap pm = makePixmap(sz);
     QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
     QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap);
     p.setPen(pen); p.setBrush(Qt::NoBrush);
@@ -116,7 +126,7 @@ inline QIcon repeatAll(QColor c, int sz = 24) {
 }
 
 inline QIcon repeatOne(QColor c, int sz = 24) {
-    QPixmap pm(sz, sz); pm.fill(Qt::transparent);
+    QPixmap pm = makePixmap(sz);
     QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
     QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap);
     p.setPen(pen); p.setBrush(Qt::NoBrush);
@@ -133,7 +143,7 @@ inline QIcon repeatOne(QColor c, int sz = 24) {
 }
 
 inline QIcon microphone(QColor c, int sz = 24) {
-    QPixmap pm(sz, sz); pm.fill(Qt::transparent);
+    QPixmap pm = makePixmap(sz);
     QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen); p.setBrush(c);
     p.drawRoundedRect(QRectF(sz*0.34f, sz*0.05f, sz*0.32f, sz*0.50f), sz*0.16f, sz*0.16f);
@@ -146,7 +156,7 @@ inline QIcon microphone(QColor c, int sz = 24) {
 }
 
 inline QIcon expand(QColor c, int sz = 24) {
-    QPixmap pm(sz, sz); pm.fill(Qt::transparent);
+    QPixmap pm = makePixmap(sz);
     QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
     QPen pen(c, sz * 0.11f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     p.setPen(pen);

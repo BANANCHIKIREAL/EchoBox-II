@@ -116,24 +116,6 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
     l->setContentsMargins(16,12,16,12);
     l->setSpacing(8);
 
-    // Theme
-    l->addWidget(makeHead("Тема",
-        "Выбор цветовой схемы:\n"
-        "• Mocha — тёмная тема Catppuccin\n"
-        "• Latte — светлая тема Catppuccin"));
-
-    auto *themeBox = new QGroupBox(tab);
-    auto *thL = new QHBoxLayout(themeBox);
-    m_themeGroup = new QButtonGroup(this);
-    auto *mocha = new QRadioButton("Catppuccin Mocha  (тёмная)");
-    auto *latte = new QRadioButton("Catppuccin Latte  (светлая)");
-    m_themeGroup->addButton(mocha, 0);
-    m_themeGroup->addButton(latte, 1);
-    (m_result.theme == "latte" ? latte : mocha)->setChecked(true);
-    thL->addWidget(mocha); thL->addWidget(latte); thL->addStretch();
-    l->addWidget(themeBox);
-    m_liveWidgets << mocha << latte;
-
     l->addWidget(makeSep());
 
     // Accent
@@ -382,9 +364,6 @@ void SettingsDialog::connectLive() {
             connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                     this, &SettingsDialog::liveApply);
     }
-    // Theme group
-    connect(m_themeGroup, QOverload<int,bool>::of(&QButtonGroup::idToggled),
-            this, [this](int, bool checked){ if (checked) liveApply(); });
     // Font group
     connect(m_fontGroup, QOverload<int,bool>::of(&QButtonGroup::idToggled),
             this, [this](int, bool checked){ if (checked) liveApply(); });
@@ -412,7 +391,7 @@ void SettingsDialog::browseFolder(QLineEdit *edit) {
 }
 
 void SettingsDialog::collectResult() {
-    m_result.theme       = m_themeGroup->checkedId() == 1 ? "latte" : "mocha";
+    m_result.theme       = "mocha";
     m_result.fontSizeIdx = m_fontGroup->checkedId();
     const QStringList av = {"rounded","square","circle"};
     m_result.artShape    = av.value(m_artShapeCombo->currentIndex(), "rounded");

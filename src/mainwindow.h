@@ -17,14 +17,15 @@
 #include <QColor>
 #include <QCryptographicHash>
 #include <QAudioDevice>
+#include <QSlider>
 #include "settingsdialog.h"
+#include "waveformslider.h"
 #include "backgroundwidget.h"
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
 #include <QAudioBufferOutput>
 #endif
 
-class QSlider;
 class QLabel;
 class QToolButton;
 class QListWidget;
@@ -196,8 +197,8 @@ private:
     QPixmap     m_coverPixmap;          // raw cover from metadata (unscaled)
 
     // ── Seek ─────────────────────────────────────────────────────────────────
-    QSlider *m_seekSlider = nullptr;
-    QLabel  *m_timeLabel  = nullptr;
+    WaveformSlider *m_seekSlider = nullptr;
+    QLabel         *m_timeLabel  = nullptr;
 
     // ── Transport controls ───────────────────────────────────────────────────
     QToolButton *m_prevBtn      = nullptr;
@@ -218,7 +219,7 @@ private:
     QToolButton *m_miniPlayBtn    = nullptr;
     QLabel      *m_miniTitle      = nullptr;
     QLabel      *m_miniAlbumArt   = nullptr;
-    Visualizer  *m_miniVisualizer = nullptr;
+    WaveformSlider *m_miniWaveform  = nullptr;
     QToolButton *m_miniShuffleBtn = nullptr;
     QToolButton *m_miniRepeatBtn  = nullptr;
     QSlider     *m_miniVolSlider  = nullptr;

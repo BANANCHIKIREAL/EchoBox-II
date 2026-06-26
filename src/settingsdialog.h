@@ -57,7 +57,6 @@ private:
 
     AppSettings m_result;
 
-    QButtonGroup *m_themeGroup   = nullptr;
     QLabel       *m_accentSwatch = nullptr;
     QButtonGroup *m_fontGroup    = nullptr;
     QComboBox    *m_artShapeCombo= nullptr;
