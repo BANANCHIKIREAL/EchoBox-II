@@ -18,9 +18,12 @@
 #include <QCryptographicHash>
 #include <QAudioDevice>
 #include <QSlider>
+#include <QThread>
+#include <QFileSystemWatcher>
 #include "settingsdialog.h"
 #include "waveformslider.h"
 #include "backgroundwidget.h"
+#include "libraryscanner.h"
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
 #include <QAudioBufferOutput>
@@ -113,6 +116,12 @@ private slots:
     void showAbout();
     void openRecentFile(const QString &path);
     void openSettings();
+    // Library scanner
+    void scanLibrary();
+    void onLibraryBatch(QList<QUrl> batch);
+    void onLibraryProgress(int found, int scanned);
+    void onLibraryFinished(int total);
+    void onLibraryDirChanged(const QString &path);
 
 private:
     void setupMenuBar();
@@ -256,6 +265,12 @@ private:
 
     // ── Discord RPC ──────────────────────────────────────────────────────────
     DiscordRPC *m_discord = nullptr;
+
+    // ── Library scanner ──────────────────────────────────────────────────────
+    LibraryScanner    *m_libraryScanner = nullptr;
+    QThread           *m_libraryThread  = nullptr;
+    QFileSystemWatcher *m_libraryWatcher = nullptr;
+    int                m_libraryPlIdx   = -1;   // index of "Библиотека" tab
 
     // ── Mic routing ──────────────────────────────────────────────────────────
     class QAudioSink   *m_micSink    = nullptr;

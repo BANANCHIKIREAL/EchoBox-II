@@ -18,6 +18,8 @@
 #include <QFrame>
 #include <QToolTip>
 #include <QStandardPaths>
+#include <QFontComboBox>
+#include <QFontDatabase>
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -165,6 +167,51 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
     }
     presetRow->addStretch();
     l->addLayout(presetRow);
+
+    l->addWidget(makeSep());
+
+    // Font family
+    l->addWidget(makeHead("Шрифт интерфейса",
+        "Шрифт для всего текста в приложении.\n"
+        "Оставь пустым — будет использоваться системный шрифт (Segoe UI)."));
+
+    m_fontFamilyCombo = new QFontComboBox(tab);
+    m_fontFamilyCombo->setEditable(true);
+    m_fontFamilyCombo->setMaximumWidth(300);
+    if (!m_result.fontFamily.isEmpty())
+        m_fontFamilyCombo->setCurrentFont(QFont(m_result.fontFamily));
+    m_liveWidgets << m_fontFamilyCombo;
+
+    auto *fontBrowseBtn = new QPushButton("Обзор...", tab);
+    fontBrowseBtn->setMaximumWidth(90);
+    connect(fontBrowseBtn, &QPushButton::clicked, this, [this]{
+        const QString path = QFileDialog::getOpenFileName(
+            this, "Выбрать файл шрифта", "",
+            "Шрифты (*.ttf *.otf *.woff *.woff2);;Все файлы (*)");
+        if (path.isEmpty()) return;
+        const int id = QFontDatabase::addApplicationFont(path);
+        if (id < 0) { QToolTip::showText(QCursor::pos(), "Не удалось загрузить шрифт"); return; }
+        const QStringList families = QFontDatabase::applicationFontFamilies(id);
+        if (families.isEmpty()) return;
+        m_result.fontFilePath = path;
+        m_fontFamilyCombo->setCurrentFont(QFont(families.first()));
+        liveApply();
+    });
+
+    auto *fontResetBtn = new QPushButton("По умолчанию", tab);
+    fontResetBtn->setMaximumWidth(120);
+    connect(fontResetBtn, &QPushButton::clicked, this, [this]{
+        m_result.fontFilePath = "";
+        m_fontFamilyCombo->setCurrentFont(QFont("Segoe UI"));
+        liveApply();
+    });
+
+    auto *fontFamRow = new QHBoxLayout;
+    fontFamRow->addWidget(m_fontFamilyCombo);
+    fontFamRow->addWidget(fontBrowseBtn);
+    fontFamRow->addWidget(fontResetBtn);
+    fontFamRow->addStretch();
+    l->addLayout(fontFamRow);
 
     l->addWidget(makeSep());
 
@@ -367,6 +414,9 @@ void SettingsDialog::connectLive() {
     // Font group
     connect(m_fontGroup, QOverload<int,bool>::of(&QButtonGroup::idToggled),
             this, [this](int, bool checked){ if (checked) liveApply(); });
+    // Font family combo
+    connect(m_fontFamilyCombo, &QFontComboBox::currentFontChanged,
+            this, [this]{ liveApply(); });
 }
 
 void SettingsDialog::liveApply() {
@@ -393,6 +443,8 @@ void SettingsDialog::browseFolder(QLineEdit *edit) {
 void SettingsDialog::collectResult() {
     m_result.theme       = "mocha";
     m_result.fontSizeIdx = m_fontGroup->checkedId();
+    m_result.fontFamily  = m_fontFamilyCombo->currentFont().family();
+    // fontFilePath already updated directly in the browse/reset handlers
     const QStringList av = {"rounded","square","circle"};
     m_result.artShape    = av.value(m_artShapeCombo->currentIndex(), "rounded");
 
