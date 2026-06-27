@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/Qt-6.11.1-41CD52?style=for-the-badge&logo=qt&logoColor=white"/>
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white"/>
   <img src="https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white"/>
-  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-red?style=for-the-badge"/>
   <img src="https://img.shields.io/badge/version-1.2.0-blue?style=for-the-badge"/>
 </p>
 
@@ -231,4 +231,6 @@ EchoBox-II/
 
 ## Лицензия
 
-MIT © [BANANCHIKIREAL](https://github.com/BANANCHIKIREAL)
+MIT + Commons Clause © [BANANCHIKIREAL](https://github.com/BANANCHIKIREAL)
+
+Можно использовать, изменять и распространять. **Продажа запрещена.**
