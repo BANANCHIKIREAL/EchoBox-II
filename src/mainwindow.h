@@ -164,6 +164,7 @@ private:
     QString trackIconPath(const QUrl &url) const;
     void applyTrackIcon(QListWidgetItem *item, const QUrl &url);
     void reloadTrackIcons();
+    void updateDuplicateHighlights();
     void scheduleScan(const QList<QUrl> &urls);
     void advanceMetaScan();
     void handleMetaReaderUpdate();
