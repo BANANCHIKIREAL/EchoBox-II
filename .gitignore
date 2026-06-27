@@ -3,3 +3,5 @@ build/
 .qtcreator/
 *.o
 *.obj
+
+dist/

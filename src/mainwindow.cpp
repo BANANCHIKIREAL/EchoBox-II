@@ -92,6 +92,10 @@ public:
         else if (opt.state & QStyle::State_MouseOver)
             p->fillRect(opt.rect, QColor(0x2a,0x2b,0x3d));
 
+        // Duplicate highlight — drawn after base bg, before content
+        if (idx.data(Qt::UserRole + 10).toBool())
+            p->fillRect(opt.rect, QColor(0xeb, 0xa0, 0xac, 40));
+
         const int iconSz = 36;
         const int margin = 4;
         int textX = opt.rect.left() + 10;
@@ -475,6 +479,7 @@ void MainWindow::setupUi() {
     // ══ MINI BAR (visible only in mini player mode) ══════════════════════════
     m_miniBar = new QWidget(this);
     m_miniBar->setObjectName("miniBar");
+    m_miniBar->setAutoFillBackground(false);
     m_miniBar->hide();
 
     QHBoxLayout *miniL = new QHBoxLayout(m_miniBar);
@@ -792,7 +797,7 @@ void MainWindow::applyTheme() {
             margin: 0 6px 6px 6px;
         }
         QWidget#miniBar {
-            background-color: rgba(20, 20, 32, 230);
+            background-color: transparent;
         }
         QMenuBar {
             background-color: #181825;
@@ -827,7 +832,7 @@ void MainWindow::applyTheme() {
         QLabel#miniTitle   { color: #cdd6f4; font-size: 13px; font-weight: bold; padding: 0 6px; }
 
         QFrame#separator { color: #313244; max-height: 1px; background: #313244; }
-        QWidget#miniBar  { background-color: #181825; }
+        QWidget#miniBar  { background-color: transparent; }
         QLabel#miniAlbumArt { border-radius: 6px; background-color: #313244; }
 
         QWidget#mediaStack {
@@ -1313,6 +1318,7 @@ void MainWindow::addFiles(const QList<QUrl> &urls) {
         if (m_cfg.showTrackIcons) applyTrackIcon(item, url);
     }
     updatePlaylistInfo();
+    updateDuplicateHighlights();
     scheduleScan(urls);
     if (wasEmpty && !m_playlist.isEmpty()) playTrack(0);
 }
@@ -1379,6 +1385,7 @@ void MainWindow::removeSelectedTracks() {
     }
     if (m_currentIndex >= m_playlist.size()) m_currentIndex = m_playlist.size() - 1;
     updatePlaylistInfo();
+    updateDuplicateHighlights();
 }
 
 void MainWindow::moveTrackUp() {
@@ -1501,6 +1508,39 @@ void MainWindow::onPlaylistContextMenu(const QPoint &pos) {
     menu.addAction("Загрузить плейлист...", this, &MainWindow::loadPlaylist);
     menu.addSeparator();
     menu.addAction("Очистить всё", this, &MainWindow::clearPlaylist);
+    menu.addSeparator();
+    auto *removeDupAct = menu.addAction("Удалить дубликаты", [this]{
+        const int n = m_playlistWidget->count();
+        QSet<QString> seenPaths, seenMeta;
+        QList<int> toRemove;
+        for (int i = 0; i < n; ++i) {
+            QListWidgetItem *it = m_playlistWidget->item(i);
+            const QString path  = it->data(Qt::UserRole).value<QUrl>().toLocalFile().toLower();
+            const QString title  = it->data(Qt::UserRole + 2).toString().toLower().trimmed();
+            const QString artist = it->data(Qt::UserRole + 3).toString().toLower().trimmed();
+            const QString meta   = artist + "||" + title;
+            bool dup = false;
+            if (!path.isEmpty() && seenPaths.contains(path))      dup = true;
+            else if (!title.isEmpty() && seenMeta.contains(meta)) dup = true;
+            if (dup) { toRemove.prepend(i); continue; }
+            seenPaths.insert(path);
+            if (!title.isEmpty()) seenMeta.insert(meta);
+        }
+        for (int i : toRemove) {
+            const QUrl url = m_playlistWidget->item(i)->data(Qt::UserRole).value<QUrl>();
+            delete m_playlistWidget->takeItem(i);
+            m_playlist.removeAll(url);
+            if (m_currentIndex == i)      m_currentIndex = -1;
+            else if (m_currentIndex > i)  --m_currentIndex;
+        }
+        updatePlaylistInfo();
+        updateDuplicateHighlights();
+    });
+    // Show grayed out if there are no duplicates
+    bool hasDups = false;
+    for (int i = 0; i < m_playlistWidget->count(); ++i)
+        if (m_playlistWidget->item(i)->data(Qt::UserRole + 10).toBool()) { hasDups = true; break; }
+    removeDupAct->setEnabled(hasDups);
     menu.exec(m_playlistWidget->mapToGlobal(pos));
 }
 
@@ -1603,7 +1643,7 @@ void MainWindow::nextAuto() { playNext(true); }
 void MainWindow::playNext(bool respectRepeat) {
     if (m_playlist.isEmpty()) return;
 
-    if (m_repeat == RepeatMode::One) {
+    if (respectRepeat && m_repeat == RepeatMode::One) {
         m_player->setPosition(0);
         m_player->play();
         return;
@@ -2292,6 +2332,7 @@ void MainWindow::handleMetaReaderUpdate() {
             item->setIcon(QIcon(icoFile));
     }
 
+    updateDuplicateHighlights();
     m_metaScanQueue.removeFirst();
     QTimer::singleShot(30, this, &MainWindow::advanceMetaScan);
 }
@@ -2687,6 +2728,7 @@ void MainWindow::onLibraryBatch(QList<QUrl> batch)
 
     if (isActive) {
         updatePlaylistInfo();
+        updateDuplicateHighlights();
         scheduleScan(batch);
     }
 }
@@ -2714,4 +2756,40 @@ void MainWindow::onLibraryDirChanged(const QString &/*path*/)
     statusBar()->showMessage(
         "Обнаружены новые файлы в библиотеке. "
         "Файл → Сканировать библиотеку для обновления.", 8000);
+}
+
+void MainWindow::updateDuplicateHighlights()
+{
+    const int n = m_playlistWidget->count();
+    if (n == 0) return;
+
+    QHash<QString, int> pathCount;
+    for (int i = 0; i < n; ++i) {
+        QListWidgetItem *it = m_playlistWidget->item(i);
+        const QString path = it->data(Qt::UserRole).value<QUrl>().toLocalFile().toLower();
+        pathCount[path]++;
+    }
+
+    QHash<QString, int> metaCount;
+    for (int i = 0; i < n; ++i) {
+        QListWidgetItem *it = m_playlistWidget->item(i);
+        const QString title  = it->data(Qt::UserRole + 2).toString().toLower().trimmed();
+        const QString artist = it->data(Qt::UserRole + 3).toString().toLower().trimmed();
+        if (!title.isEmpty())
+            metaCount[artist + "||" + title]++;
+    }
+
+    for (int i = 0; i < n; ++i) {
+        QListWidgetItem *it = m_playlistWidget->item(i);
+        const QString path    = it->data(Qt::UserRole).value<QUrl>().toLocalFile().toLower();
+        const QString title   = it->data(Qt::UserRole + 2).toString().toLower().trimmed();
+        const QString artist  = it->data(Qt::UserRole + 3).toString().toLower().trimmed();
+        const QString metaKey = artist + "||" + title;
+
+        const bool isDup = pathCount.value(path) > 1
+                        || (!title.isEmpty() && metaCount.value(metaKey) > 1);
+
+        it->setData(Qt::UserRole + 10, isDup);
+    }
+    m_playlistWidget->viewport()->update();
 }
