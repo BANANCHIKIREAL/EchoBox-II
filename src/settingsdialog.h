@@ -6,12 +6,15 @@
 class QButtonGroup;
 class QCheckBox;
 class QComboBox;
+class QFontComboBox;
 class QLineEdit;
 
 struct AppSettings {
     QString theme        = "mocha";
     QColor  accentColor  = QColor(0xcb, 0xa6, 0xf7);
     int     fontSizeIdx  = 1;
+    QString fontFamily   = "";   // empty = system default
+    QString fontFilePath = "";   // path to custom font file (loaded via QFontDatabase)
     QString artShape     = "rounded";
 
     bool autoPlay       = false;
@@ -57,9 +60,10 @@ private:
 
     AppSettings m_result;
 
-    QLabel       *m_accentSwatch = nullptr;
-    QButtonGroup *m_fontGroup    = nullptr;
-    QComboBox    *m_artShapeCombo= nullptr;
+    QLabel        *m_accentSwatch    = nullptr;
+    QButtonGroup  *m_fontGroup       = nullptr;
+    QFontComboBox *m_fontFamilyCombo = nullptr;
+    QComboBox     *m_artShapeCombo   = nullptr;
 
     QCheckBox *m_autoPlayChk    = nullptr;
     QCheckBox *m_vizChk         = nullptr;

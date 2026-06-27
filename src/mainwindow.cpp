@@ -2,7 +2,9 @@
 #include "waveformslider.h"
 #include "visualizer.h"
 #include "backgroundwidget.h"
+#include "libraryscanner.h"
 #include <cmath>
+#include <QFontDatabase>
 #include "logo.h"
 #include "icons.h"
 #include "discordrpc.h"
@@ -228,6 +230,7 @@ void MainWindow::setupMenuBar() {
     fm->addAction("&Открыть файлы...", QKeySequence(Qt::CTRL | Qt::Key_O),
                   this, &MainWindow::openFiles);
     fm->addAction("Открыть &папку...", this, &MainWindow::openFolder);
+    fm->addAction("📚 Сканировать библиотеку", this, &MainWindow::scanLibrary);
     m_recentMenu = fm->addMenu("&Недавние файлы");
     fm->addSeparator();
     fm->addAction("&Сохранить плейлист...", QKeySequence(Qt::CTRL | Qt::Key_S),
@@ -599,7 +602,7 @@ void MainWindow::setupUi() {
     // Header row
     QHBoxLayout *plH = new QHBoxLayout;
     m_searchEdit = new QLineEdit(this);
-    m_searchEdit->setPlaceholderText("  Поиск в плейлисте...");
+    m_searchEdit->setPlaceholderText("  Поиск по названию, исполнителю, альбому...");
     m_searchEdit->setObjectName("searchEdit");
     m_searchEdit->setClearButtonEnabled(true);
 
@@ -763,15 +766,18 @@ void MainWindow::applyTheme() {
     const QColor acBg(qMax(0,ac.red()/5+0x18), qMax(0,ac.green()/5+0x14), qMax(0,ac.blue()/5+0x28));
     const QString acBgH = acBg.name();
 
-    // Font size
+    // Font
     const int fs = m_cfg.fontSizeIdx == 0 ? 11 : m_cfg.fontSizeIdx == 2 ? 15 : 13;
+    const QString family = m_cfg.fontFamily.isEmpty() ? "Segoe UI" : m_cfg.fontFamily;
+    QFont appFont(family, fs);
+    qApp->setFont(appFont);
 
     QString ss = R"(
         /* ── Aurora background shows through; no global bg ── */
         QMainWindow { background: transparent; }
         QWidget {
             color: #cdd6f4;
-            font-family: "Segoe UI", "Yu Gothic UI", sans-serif;
+            font-family: "FONTFAMILY", "Yu Gothic UI", sans-serif;
             font-size: FONTPX;
         }
         /* Semi-transparent panels so aurora bleeds through */
@@ -1047,7 +1053,8 @@ void MainWindow::applyTheme() {
     ss.replace("#d4b8f9",   acL);   // play hover
     ss.replace("#b389f4",   acD);   // play pressed
     ss.replace("#2d2040",   acBgH); // toggle checked bg
-    ss.replace("FONTPX",    QString::number(fs) + "px");
+    ss.replace("FONTPX",      QString::number(fs) + "px");
+    ss.replace("FONTFAMILY",  family);
 
     // Indicator images: written to temp files once; Qt CSS file:// paths always work
     static QString s_checkUri, s_dotUri, s_dashUri;
@@ -1148,6 +1155,11 @@ void MainWindow::loadSettings() {
     m_cfg.accentColor    = QColor(m_settings.value("cfg/accentColor", "#cba6f7").toString());
     if (!m_cfg.accentColor.isValid()) m_cfg.accentColor = QColor(0xcb,0xa6,0xf7);
     m_cfg.fontSizeIdx    = m_settings.value("cfg/fontSizeIdx", 1).toInt();
+    m_cfg.fontFamily     = m_settings.value("cfg/fontFamily",  "").toString();
+    m_cfg.fontFilePath   = m_settings.value("cfg/fontFilePath","").toString();
+    // Re-load custom font file so the family name is available
+    if (!m_cfg.fontFilePath.isEmpty())
+        QFontDatabase::addApplicationFont(m_cfg.fontFilePath);
     m_cfg.artShape       = m_settings.value("cfg/artShape", "rounded").toString();
     m_cfg.autoPlay       = m_settings.value("cfg/autoPlay", false).toBool();
     m_cfg.showVisualizer = m_settings.value("cfg/showVisualizer", true).toBool();
@@ -1176,6 +1188,8 @@ void MainWindow::saveSettings() {
     m_settings.setValue("cfg/theme",          m_cfg.theme);
     m_settings.setValue("cfg/accentColor",    m_cfg.accentColor.name());
     m_settings.setValue("cfg/fontSizeIdx",    m_cfg.fontSizeIdx);
+    m_settings.setValue("cfg/fontFamily",     m_cfg.fontFamily);
+    m_settings.setValue("cfg/fontFilePath",   m_cfg.fontFilePath);
     m_settings.setValue("cfg/artShape",       m_cfg.artShape);
     m_settings.setValue("cfg/autoPlay",       m_cfg.autoPlay);
     m_settings.setValue("cfg/showVisualizer", m_cfg.showVisualizer);
@@ -1401,10 +1415,34 @@ void MainWindow::rebuildPlaylistFromWidget() {
 
 void MainWindow::onSearchChanged(const QString &text) {
     const QString q = text.trimmed().toLower();
-    for (int i = 0; i < m_playlistWidget->count(); ++i) {
+    const QColor dimColor(0x45, 0x47, 0x5a);
+    const QColor normalColor(0xcd, 0xd6, 0xf4);
+
+    int matches = 0;
+    const int total = m_playlistWidget->count();
+
+    for (int i = 0; i < total; ++i) {
         QListWidgetItem *it = m_playlistWidget->item(i);
-        it->setHidden(!q.isEmpty() && !it->text().toLower().contains(q));
+        if (q.isEmpty()) {
+            it->setForeground(normalColor);
+            it->setHidden(false);
+        } else {
+            const QString dispText = it->text().toLower();
+            const QString title    = it->data(Qt::UserRole + 2).toString().toLower();
+            const QString artist   = it->data(Qt::UserRole + 3).toString().toLower();
+            const QString album    = it->data(Qt::UserRole + 4).toString().toLower();
+            const bool hit = dispText.contains(q) || title.contains(q)
+                          || artist.contains(q)   || album.contains(q);
+            it->setForeground(hit ? normalColor : dimColor);
+            it->setHidden(false);
+            if (hit) ++matches;
+        }
     }
+
+    if (!q.isEmpty())
+        m_playlistInfo->setText(QString("%1 из %2").arg(matches).arg(total));
+    else
+        updatePlaylistInfo();
 }
 
 void MainWindow::onTrackActivated(QListWidgetItem *item) {
@@ -1425,19 +1463,33 @@ void MainWindow::onPlaylistContextMenu(const QPoint &pos) {
             QString img = QFileDialog::getOpenFileName(this, "Выбрать иконку",
                 QString(), "Изображения (*.png *.jpg *.jpeg *.bmp *.webp)");
             if (img.isEmpty()) return;
-            QPixmap pm(img);
-            if (pm.isNull()) return;
-            pm = pm.scaled(36, 36, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation)
-                     .copy(0, 0, 36, 36);
+            QPixmap full(img);
+            if (full.isNull()) return;
             QString iconFile = trackIconPath(itemUrl);
             QDir().mkpath(QFileInfo(iconFile).absolutePath());
-            pm.save(iconFile, "PNG");
-            item->setIcon(QIcon(pm));
+            // Save full-size (capped at 512px) — used for album art display
+            const QPixmap large = (full.width() > 512 || full.height() > 512)
+                ? full.scaled(512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+                : full;
+            large.save(iconFile, "PNG");
+            // Scale down only for the small playlist icon
+            const QPixmap thumb = full.scaled(36, 36, Qt::KeepAspectRatioByExpanding,
+                                              Qt::SmoothTransformation).copy(0, 0, 36, 36);
+            item->setIcon(QIcon(thumb));
+            // If this is the currently playing track, update the album art display too
+            if (m_currentIndex >= 0 && m_playlist.value(m_currentIndex) == itemUrl) {
+                m_coverPixmap = full;
+                updateAlbumArt();
+            }
         });
         if (QFile::exists(trackIconPath(itemUrl))) {
             menu.addAction("Убрать иконку", [this, item, itemUrl]{
                 QFile::remove(trackIconPath(itemUrl));
                 item->setIcon(QIcon());
+                if (m_currentIndex >= 0 && m_playlist.value(m_currentIndex) == itemUrl) {
+                    m_coverPixmap = QPixmap();
+                    updateAlbumArt();
+                }
             });
         }
         menu.addSeparator();
@@ -1495,7 +1547,9 @@ void MainWindow::playTrack(int index) {
     if (isVideoFile(m_playlist[index]))
         m_mediaStack->setCurrentWidget(m_videoWidget);
     else {
-        m_coverPixmap = QPixmap();
+        // Load cached icon file as album art fallback (manual or scanned)
+        const QString icoFile = trackIconPath(m_playlist[index]);
+        m_coverPixmap = QFile::exists(icoFile) ? QPixmap(icoFile) : QPixmap();
         m_mediaStack->setCurrentWidget(m_albumArt);
         updateAlbumArt();
     }
@@ -1777,6 +1831,16 @@ void MainWindow::onMetaDataChanged() {
     if (!artist.isEmpty()) m_artistLabel->setText(artist);
     if (!album.isEmpty())  m_albumLabel->setText(album);
 
+    // Store metadata on the current playlist item for smart search
+    if (m_currentIndex >= 0 && m_currentIndex < m_playlistWidget->count()) {
+        QListWidgetItem *it = m_playlistWidget->item(m_currentIndex);
+        if (it) {
+            if (!title.isEmpty())  it->setData(Qt::UserRole + 2, title);
+            if (!artist.isEmpty()) it->setData(Qt::UserRole + 3, artist);
+            if (!album.isEmpty())  it->setData(Qt::UserRole + 4, album);
+        }
+    }
+
     // Обновить Discord с реальным названием из тегов
     if (m_discord && m_cfg.discordEnabled && m_player->playbackState() == QMediaPlayer::PlayingState)
         m_discord->updateActivity(m_titleLabel->text(), m_artistLabel->text());
@@ -1796,15 +1860,17 @@ void MainWindow::onMetaDataChanged() {
             const QString icoFile = trackIconPath(url);
             if (!QFile::exists(icoFile)) {
                 QDir().mkpath(QFileInfo(icoFile).absolutePath());
-                const QPixmap thumb = m_coverPixmap.scaled(36, 36,
-                    Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation).copy(0,0,36,36);
-                thumb.save(icoFile, "PNG");
+                // Save full-size cover (capped at 512px) for sharp album art
+                const QPixmap large = (m_coverPixmap.width() > 512 || m_coverPixmap.height() > 512)
+                    ? m_coverPixmap.scaled(512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+                    : m_coverPixmap;
+                large.save(icoFile, "PNG");
             }
             if (m_cfg.showTrackIcons) {
                 QListWidgetItem *item = m_playlistWidget->item(m_currentIndex);
                 if (item) item->setIcon(QIcon(
-                    m_coverPixmap.scaled(36,36,Qt::KeepAspectRatioByExpanding,Qt::SmoothTransformation)
-                       .copy(0,0,36,36)));
+                    m_coverPixmap.scaled(36, 36, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation)
+                                 .copy(0, 0, 36, 36)));
             }
         }
         return;
@@ -1907,25 +1973,37 @@ void MainWindow::updateTimeDisplay(qint64 pos, qint64 dur) {
 
 void MainWindow::showAbout() {
     QMessageBox::about(this, "О программе EchoBox II",
-        "<h2 style='color:#cba6f7'>EchoBox II  v2.0</h2>"
+        "<h2 style='color:#cba6f7'>EchoBox II  v1.2.0</h2>"
         "<p>Современный медиаплеер на <b>C++ / Qt6</b></p>"
         "<p>Форматы: MP3, FLAC, OGG, WAV, AAC, M4A, OPUS,<br>"
         "MP4, MKV, AVI, MOV, WebM и другие</p>"
         "<hr>"
+        "<p><b>Возможности:</b></p>"
+        "<ul style='margin:0;padding-left:16px'>"
+        "<li>Осциллограмма на слайдере перемотки</li>"
+        "<li>Анимированный фон с частицами, реагирующий на музыку</li>"
+        "<li>Умный поиск по названию, исполнителю и альбому</li>"
+        "<li>Сканер библиотеки (Файл → Сканировать библиотеку)</li>"
+        "<li>Кастомный шрифт интерфейса</li>"
+        "<li>Вывод музыки в микрофон через VB-Cable</li>"
+        "<li>Discord Rich Presence</li>"
+        "<li>Кроссфейд, память позиции, несколько плейлистов</li>"
+        "</ul>"
+        "<hr>"
         "<p><b>Горячие клавиши:</b></p>"
-        "<table>"
+        "<table cellspacing='4'>"
         "<tr><td><b>Пробел</b></td><td>Играть / Пауза</td></tr>"
-        "<tr><td><b>S</b></td><td>Стоп</td></tr>"
         "<tr><td><b>M</b></td><td>Выкл. / вкл. звук</td></tr>"
         "<tr><td><b>Ctrl+←/→</b></td><td>Предыдущий / Следующий</td></tr>"
         "<tr><td><b>←/→</b></td><td>Перемотка ±5 сек</td></tr>"
         "<tr><td><b>Shift+←/→</b></td><td>Перемотка ±30 сек</td></tr>"
         "<tr><td><b>↑/↓</b></td><td>Громкость ±5%</td></tr>"
         "<tr><td><b>Del</b></td><td>Удалить из плейлиста</td></tr>"
-        "<tr><td><b>Ctrl+A</b></td><td>Выбрать все треки</td></tr>"
         "<tr><td><b>Ctrl+F</b></td><td>Фокус на поиск</td></tr>"
         "<tr><td><b>F11</b></td><td>Мини-плеер</td></tr>"
-        "</table>");
+        "</table>"
+        "<hr>"
+        "<p style='color:#6c7086'>© 2026 BANANCHIKIREAL · MIT License</p>");
 }
 
 // ─── Drag & Drop ─────────────────────────────────────────────────────────────
@@ -2145,17 +2223,13 @@ QString MainWindow::formatTime(qint64 ms) {
 
 void MainWindow::scheduleScan(const QList<QUrl> &urls) {
     for (const QUrl &u : urls)
-        if (!m_metaScanQueue.contains(u) && !QFile::exists(trackIconPath(u)))
-            m_metaScanQueue.append(u);
+        if (!m_metaScanQueue.contains(u))
+            m_metaScanQueue.append(u);  // always scan — reads metadata for smart search
     if (!m_scanInProgress && !m_metaScanQueue.isEmpty())
         advanceMetaScan();
 }
 
 void MainWindow::advanceMetaScan() {
-    // Skip any that have icons already
-    while (!m_metaScanQueue.isEmpty() && QFile::exists(trackIconPath(m_metaScanQueue.first())))
-        m_metaScanQueue.removeFirst();
-
     if (m_metaScanQueue.isEmpty()) { m_scanInProgress = false; return; }
     m_scanInProgress = true;
     m_metaReader->setSource(m_metaScanQueue.first());
@@ -2164,42 +2238,62 @@ void MainWindow::advanceMetaScan() {
 void MainWindow::handleMetaReaderUpdate() {
     if (m_metaScanQueue.isEmpty()) return;
     const QUrl url = m_metaScanQueue.first();
-    if (m_metaReader->source() != url) return; // stale signal
+    if (m_metaReader->source() != url) return;
 
     const QMediaMetaData meta = m_metaReader->metaData();
+    const auto s = m_metaReader->mediaStatus();
+    const bool ready = (s == QMediaPlayer::LoadedMedia  ||
+                        s == QMediaPlayer::BufferedMedia ||
+                        s == QMediaPlayer::InvalidMedia  ||
+                        s == QMediaPlayer::NoMedia);
+    if (!ready) return;
 
-    // Try CoverArtImage first, then ThumbnailImage
-    QImage img = meta.value(QMediaMetaData::CoverArtImage).value<QImage>();
-    if (img.isNull()) img = meta.value(QMediaMetaData::ThumbnailImage).value<QImage>();
-
-    if (!img.isNull()) {
-        const QString icoFile = trackIconPath(url);
-        QDir().mkpath(QFileInfo(icoFile).absolutePath());
-        const QPixmap thumb = QPixmap::fromImage(img)
-            .scaled(36, 36, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation)
-            .copy(0, 0, 36, 36);
-        thumb.save(icoFile, "PNG");
-
-        if (m_cfg.showTrackIcons) {
-            const int idx = m_playlist.indexOf(url);
-            if (idx >= 0) {
-                QListWidgetItem *item = m_playlistWidget->item(idx);
-                if (item) item->setIcon(QIcon(thumb));
-            }
-        }
-        m_metaScanQueue.removeFirst();
-        QTimer::singleShot(30, this, &MainWindow::advanceMetaScan);
-    } else {
-        // No cover art yet — skip if media is already fully loaded or errored
-        const auto s = m_metaReader->mediaStatus();
-        if (s == QMediaPlayer::LoadedMedia  ||
-            s == QMediaPlayer::BufferedMedia ||
-            s == QMediaPlayer::InvalidMedia  ||
-            s == QMediaPlayer::NoMedia) {
-            m_metaScanQueue.removeFirst();
-            QTimer::singleShot(30, this, &MainWindow::advanceMetaScan);
+    // Store title / artist / album on the playlist item for smart search
+    const int idx = m_playlist.indexOf(url);
+    if (idx >= 0) {
+        QListWidgetItem *item = m_playlistWidget->item(idx);
+        if (item) {
+            const QString title  = meta.value(QMediaMetaData::Title).toString();
+            const QString artist = meta.value(QMediaMetaData::ContributingArtist).toString().isEmpty()
+                                 ? meta.value(QMediaMetaData::AlbumArtist).toString()
+                                 : meta.value(QMediaMetaData::ContributingArtist).toString();
+            const QString album  = meta.value(QMediaMetaData::AlbumTitle).toString();
+            if (!title.isEmpty())  item->setData(Qt::UserRole + 2, title);
+            if (!artist.isEmpty()) item->setData(Qt::UserRole + 3, artist);
+            if (!album.isEmpty())  item->setData(Qt::UserRole + 4, album);
         }
     }
+
+    // Save cover art icon if not cached yet
+    const QString icoFile = trackIconPath(url);
+    if (!QFile::exists(icoFile)) {
+        QImage img = meta.value(QMediaMetaData::CoverArtImage).value<QImage>();
+        if (img.isNull()) img = meta.value(QMediaMetaData::ThumbnailImage).value<QImage>();
+        if (!img.isNull()) {
+            QDir().mkpath(QFileInfo(icoFile).absolutePath());
+            const QPixmap full = QPixmap::fromImage(img);
+            // Save full-size (capped at 512px) for sharp album art display
+            const QPixmap large = (full.width() > 512 || full.height() > 512)
+                ? full.scaled(512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+                : full;
+            large.save(icoFile, "PNG");
+            if (m_cfg.showTrackIcons && idx >= 0) {
+                QListWidgetItem *item = m_playlistWidget->item(idx);
+                if (item) {
+                    const QPixmap thumb = full.scaled(36, 36, Qt::KeepAspectRatioByExpanding,
+                                                      Qt::SmoothTransformation).copy(0, 0, 36, 36);
+                    item->setIcon(QIcon(thumb));
+                }
+            }
+        }
+    } else if (m_cfg.showTrackIcons && idx >= 0) {
+        QListWidgetItem *item = m_playlistWidget->item(idx);
+        if (item && item->icon().isNull())
+            item->setIcon(QIcon(icoFile));
+    }
+
+    m_metaScanQueue.removeFirst();
+    QTimer::singleShot(30, this, &MainWindow::advanceMetaScan);
 }
 
 // ─── Track icon helpers ───────────────────────────────────────────────────────
@@ -2217,7 +2311,11 @@ void MainWindow::applyTrackIcon(QListWidgetItem *item, const QUrl &url) {
     const QString f = trackIconPath(url);
     if (QFile::exists(f)) {
         QPixmap pm(f);
-        if (!pm.isNull()) item->setIcon(QIcon(pm));
+        if (!pm.isNull()) {
+            // Icon files are now full-size — scale down for the 36px playlist slot
+            item->setIcon(QIcon(pm.scaled(36, 36, Qt::KeepAspectRatioByExpanding,
+                                          Qt::SmoothTransformation).copy(0, 0, 36, 36)));
+        }
     }
 }
 
@@ -2488,4 +2586,132 @@ void MainWindow::openSettings() {
         applyTheme();
         applyIconsIfNeeded(prev);
     }
+}
+
+// ─── Library scanner ──────────────────────────────────────────────────────────
+
+void MainWindow::scanLibrary()
+{
+    const QString folder = m_cfg.libraryFolder;
+    if (folder.isEmpty() || !QDir(folder).exists()) {
+        statusBar()->showMessage(
+            "Папка библиотеки не задана. Укажи её в Настройки → Файлы.", 5000);
+        return;
+    }
+
+    // Stop previous scan if running
+    if (m_libraryThread && m_libraryThread->isRunning()) {
+        if (m_libraryScanner) m_libraryScanner->cancel();
+        m_libraryThread->quit();
+        m_libraryThread->wait(2000);
+    }
+
+    // Find or create "Библиотека" tab
+    if (m_libraryPlIdx < 0 || m_libraryPlIdx >= m_playlists.size()) {
+        saveCurrentPlaylistState();
+        const QString name = "📚 Библиотека";
+        m_playlists.append({name, {}, -1});
+        m_tabBar->addTab(name);
+        m_libraryPlIdx = m_playlists.size() - 1;
+        m_tabBar->setCurrentIndex(m_libraryPlIdx);
+    } else {
+        // Clear existing library playlist
+        saveCurrentPlaylistState();
+        m_playlists[m_libraryPlIdx].tracks.clear();
+        m_playlists[m_libraryPlIdx].currentTrack = -1;
+        m_tabBar->setCurrentIndex(m_libraryPlIdx);
+        loadPlaylistState(m_libraryPlIdx);
+    }
+
+    statusBar()->showMessage("Сканирование библиотеки...");
+
+    // Setup file system watcher
+    if (!m_libraryWatcher) {
+        m_libraryWatcher = new QFileSystemWatcher(this);
+        connect(m_libraryWatcher, &QFileSystemWatcher::directoryChanged,
+                this, &MainWindow::onLibraryDirChanged);
+    }
+    m_libraryWatcher->removePaths(m_libraryWatcher->directories());
+    m_libraryWatcher->addPath(folder);
+
+    // Launch scanner in background thread
+    m_libraryScanner = new LibraryScanner(folder);
+    m_libraryThread  = new QThread(this);
+    m_libraryScanner->moveToThread(m_libraryThread);
+
+    connect(m_libraryThread,  &QThread::started,
+            m_libraryScanner, &LibraryScanner::run);
+    connect(m_libraryScanner, &LibraryScanner::batchReady,
+            this, &MainWindow::onLibraryBatch,     Qt::QueuedConnection);
+    connect(m_libraryScanner, &LibraryScanner::progress,
+            this, &MainWindow::onLibraryProgress,  Qt::QueuedConnection);
+    connect(m_libraryScanner, &LibraryScanner::finished,
+            this, &MainWindow::onLibraryFinished,  Qt::QueuedConnection);
+    connect(m_libraryScanner, &LibraryScanner::finished,
+            m_libraryThread,  &QThread::quit);
+    connect(m_libraryThread,  &QThread::finished,
+            m_libraryScanner, &QObject::deleteLater);
+    connect(m_libraryThread,  &QThread::finished,
+            m_libraryThread,  &QObject::deleteLater);
+
+    m_libraryThread->start();
+}
+
+void MainWindow::onLibraryBatch(QList<QUrl> batch)
+{
+    if (m_libraryPlIdx < 0 || m_libraryPlIdx >= m_playlists.size()) return;
+
+    // If library tab is active, add directly to widget; otherwise store in data
+    const bool isActive = (m_activePl == m_libraryPlIdx);
+
+    // Sort batch by filename
+    std::sort(batch.begin(), batch.end(), [](const QUrl &a, const QUrl &b){
+        return QFileInfo(a.toLocalFile()).fileName().toLower()
+             < QFileInfo(b.toLocalFile()).fileName().toLower();
+    });
+
+    for (const QUrl &url : batch) {
+        if (m_playlists[m_libraryPlIdx].tracks.contains(url)) continue;
+        m_playlists[m_libraryPlIdx].tracks.append(url);
+
+        if (isActive) {
+            const int n    = m_playlist.size();
+            const QString name = QFileInfo(url.toLocalFile()).fileName();
+            auto *item = new QListWidgetItem(QString("  %1.  %2").arg(n + 1).arg(name));
+            item->setData(Qt::UserRole, url);
+            m_playlistWidget->addItem(item);
+            m_playlist.append(url);
+            if (m_cfg.showTrackIcons) applyTrackIcon(item, url);
+        }
+    }
+
+    if (isActive) {
+        updatePlaylistInfo();
+        scheduleScan(batch);
+    }
+}
+
+void MainWindow::onLibraryProgress(int found, int /*scanned*/)
+{
+    statusBar()->showMessage(QString("Сканирование библиотеки: найдено %1 треков...").arg(found));
+}
+
+void MainWindow::onLibraryFinished(int total)
+{
+    statusBar()->showMessage(
+        QString("Библиотека: %1 треков найдено  ·  %2")
+            .arg(total)
+            .arg(m_cfg.libraryFolder), 8000);
+
+    // If the library tab wasn't active during scan, refresh it now
+    if (m_activePl == m_libraryPlIdx)
+        updatePlaylistInfo();
+}
+
+void MainWindow::onLibraryDirChanged(const QString &/*path*/)
+{
+    // New files appeared — offer a rescan via status bar message
+    statusBar()->showMessage(
+        "Обнаружены новые файлы в библиотеке. "
+        "Файл → Сканировать библиотеку для обновления.", 8000);
 }
