@@ -20,6 +20,8 @@
 #include <QSlider>
 #include <QThread>
 #include <QFileSystemWatcher>
+#include <QSet>
+#include <functional>
 #include "settingsdialog.h"
 #include "waveformslider.h"
 #include "backgroundwidget.h"
@@ -41,6 +43,7 @@ class QAction;
 class QActionGroup;
 class QStackedWidget;
 class QVideoWidget;
+class QNetworkAccessManager;
 class Visualizer;
 class DiscordRPC;
 
@@ -50,6 +53,22 @@ struct PlaylistEntry {
     QString      name;
     QList<QUrl>  tracks;
     int          currentTrack = -1;
+};
+
+// Трек, добавленный по ссылке (SoundCloud, YouTube и т.д. через yt-dlp,
+// либо прямая ссылка на аудиофайл). Ключ в m_streamTracks — исходная
+// ссылка пользователя (то, что лежит в m_playlist). Для ссылок через
+// yt-dlp трек скачивается целиком на диск (localPath) — так надёжнее,
+// чем отдавать плееру подписанный CDN-адрес напрямую (многие сервисы,
+// включая YouTube, требуют для него специфичные HTTP-заголовки, которых
+// у QMediaPlayer нет возможности передать). Для настоящих прямых ссылок
+// на аудиофайл (isDirectUrl) скачивание не нужно — играем поток как есть.
+struct StreamTrackInfo {
+    QString title;
+    QString artist;
+    QString thumbnailUrl;
+    QString localPath;
+    bool    isDirectUrl = false;
 };
 
 class MainWindow : public QMainWindow {
@@ -70,6 +89,7 @@ private slots:
     // File
     void openFiles();
     void openFolder();
+    void openUrlDialog();
     void savePlaylist();
     void loadPlaylist();
     // Playlist
@@ -95,12 +115,13 @@ private slots:
     void toggleShuffle();
     void cycleRepeat();
     void toggleMiniPlayer();
-    void toggleMicRouting();
-    void micTimerTick();
     void toggleAlwaysOnTop();
     void toggleRemainingTime();
+    void toggleMicRouting();   // подмешивать музыку в микрофон через EchoBox APO
+    void apoTryOpenRing();     // периодически пытается открыть ring-буфер APO
     // Player signals
     void onDurationChanged(qint64 ms);
+    void onWaveformPeaksReady(QVector<float> peaks);
     void onPositionChanged(qint64 ms);
     void onPlaybackStateChanged(QMediaPlayer::PlaybackState state);
     void onMediaStatusChanged(QMediaPlayer::MediaStatus status);
@@ -114,6 +135,7 @@ private slots:
     void onTabContextMenu(const QPoint &pos);
     // Other
     void showAbout();
+    void checkForUpdates(bool manual);
     void openRecentFile(const QString &path);
     void openSettings();
     // Library scanner
@@ -140,6 +162,26 @@ private:
     void saveCurrentPlaylistState();
     void loadPlaylistState(int index);
     void deletePlaylist(int index);
+
+    // ── Ссылки на музыку (SoundCloud/YouTube/др. через yt-dlp, прямые URL) ────
+    void openStreamUrl(const QString &link);
+    bool looksLikeDirectMediaUrl(const QUrl &url) const;
+    void addDirectStreamUrl(const QUrl &url);
+    int  insertStreamPlaceholder(const QUrl &pageUrl);
+    void updateStreamPlaceholder(const QUrl &pageUrl, bool ok, const QString &localPath,
+                                  const QString &title, const QString &artist,
+                                  const QString &thumbnailUrl);
+    void downloadStreamTrack(const QUrl &pageUrl,
+                              std::function<void(bool ok, QString localPath, QString title,
+                                                  QString artist, QString thumbnailUrl)> callback);
+    void beginStreamPlayback(int index, const QUrl &pageUrl);
+    void commitStreamPlayback(int index, const QUrl &pageUrl, const QUrl &mediaSource);
+    void fetchStreamThumbnail(const QUrl &pageUrl, const QString &thumbnailUrl);
+    QString ytDlpPath() const;
+    QString streamCacheDir() const;
+    QString trackDisplayTitle(const QUrl &url) const;
+    QString trackDisplayArtist(const QUrl &url) const;
+    QString playlistRowLabel(const QUrl &url) const;
 
     // Feature 8 — position memory
     QString positionKey(const QUrl &url) const;
@@ -186,6 +228,8 @@ private:
     int            m_lastVolume    = 70;
     bool           m_seeking       = false;
     bool           m_miniPlayer    = false;
+    bool           m_miniDragging  = false;
+    QPoint         m_miniDragOffset;
 
     // ── Layout helpers ───────────────────────────────────────────────────────
     AuroraWidget   *m_aurora      = nullptr;
@@ -209,6 +253,8 @@ private:
     // ── Seek ─────────────────────────────────────────────────────────────────
     WaveformSlider *m_seekSlider = nullptr;
     QLabel         *m_timeLabel  = nullptr;
+    QHash<QUrl, QVector<float>> m_waveformCache;   // не пересчитывать волну повторно за сессию
+    QUrl                        m_waveformLoadingUrl;
 
     // ── Transport controls ───────────────────────────────────────────────────
     QToolButton *m_prevBtn      = nullptr;
@@ -246,6 +292,12 @@ private:
     QVector<PlaylistEntry> m_playlists;
     int                    m_activePl = 0;
 
+    // ── Ссылки на музыку (SoundCloud/YouTube/др.) ────────────────────────────
+    QHash<QUrl, StreamTrackInfo> m_streamTracks;
+    bool                         m_ytDlpMissingWarned = false;
+    QNetworkAccessManager       *m_streamArtNam = nullptr;  // скачивание обложек
+    QSet<QUrl>                   m_streamResolving;         // ссылки, которые yt-dlp сейчас скачивает
+
     // ── Menu actions ─────────────────────────────────────────────────────────
     QMenu        *m_recentMenu     = nullptr;
     QAction      *m_shuffleAct     = nullptr;
@@ -273,23 +325,27 @@ private:
     QFileSystemWatcher *m_libraryWatcher = nullptr;
     int                m_libraryPlIdx   = -1;   // index of "Библиотека" tab
 
-    // ── Mic routing ──────────────────────────────────────────────────────────
-    class QAudioSink   *m_micSink    = nullptr;
-    class QAudioSource *m_micSource  = nullptr;
-    QIODevice          *m_micOutput  = nullptr;
-    QIODevice          *m_micCapture = nullptr;
-    QTimer             *m_micTimer   = nullptr;
-    QByteArray          m_musicMixBuf;
-    bool                m_micRouting = false;
-    QAudioDevice        m_micDevice;
-    QToolButton        *m_micBtn     = nullptr;
-    void                stopMicRouting();
-
     // ── Crossfade ─────────────────────────────────────────────────────────────
     int    m_crossfadeSecs = 0;
     bool   m_crossfading   = false;
     float  m_fadeFactor    = 1.0f;
     QTimer *m_fadeInTimer  = nullptr;
+
+    // ── APO mic routing (music → microphone via EchoBox APO) ─────────────────
+    QToolButton *m_micBtn        = nullptr;
+    bool         m_micRouting    = false;
+    void        *m_apoMapping    = nullptr;  // HANDLE
+    void        *m_apoRing       = nullptr;  // EchoBoxRing*
+    QTimer      *m_apoOpenTimer  = nullptr;  // polls until APO ring appears
+    unsigned     m_apoWritePos   = 0;        // local mirror of ring writePos (frames)
+    bool         m_apoBlockVoice = false;    // "только музыка" — глушить реальный микрофон
+    float        m_apoMusicGain  = 1.5f;     // громкость музыки в микрофоне
+    bool         m_apoNoiseGate  = true;     // шумоподавление голоса (гейт + HPF)
+    float        m_apoGateThresh = 0.02f;    // порог гейта
+    void         apoCloseRing();
+    void         apoFeed(const class QAudioBuffer &buffer);
+    void         apoPushControls();          // пишет blockVoice/musicGain в ring
+    void         showMicMenu();              // ПКМ-меню кнопки микрофона
 
     // ── Настройки ─────────────────────────────────────────────────────────────
     AppSettings m_cfg;
