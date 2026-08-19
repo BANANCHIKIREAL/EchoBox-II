@@ -115,6 +115,7 @@ private slots:
     void toggleShuffle();
     void cycleRepeat();
     void toggleMiniPlayer();
+    void toggleMiniDock();
     void toggleAlwaysOnTop();
     void toggleRemainingTime();
     void toggleMicRouting();   // подмешивать музыку в микрофон через EchoBox APO
@@ -230,6 +231,8 @@ private:
     bool           m_miniPlayer    = false;
     bool           m_miniDragging  = false;
     QPoint         m_miniDragOffset;
+    bool           m_miniDocked    = false;  // растянут на всю ширину экрана и прижат к верху
+    QRect          m_miniUndockedGeometry;   // геометрия для возврата при откреплении
 
     // ── Layout helpers ───────────────────────────────────────────────────────
     AuroraWidget   *m_aurora      = nullptr;
@@ -280,6 +283,7 @@ private:
     QToolButton *m_miniRepeatBtn  = nullptr;
     QSlider     *m_miniVolSlider  = nullptr;
     QToolButton *m_miniMuteBtn    = nullptr;
+    QToolButton *m_miniDockBtn    = nullptr;
 
     // ── Playlist panel ───────────────────────────────────────────────────────
     QWidget     *m_playlistPanel  = nullptr;

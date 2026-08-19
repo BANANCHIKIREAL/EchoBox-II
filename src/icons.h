@@ -194,4 +194,17 @@ inline QIcon closeIcon(QColor c, int sz = 24) {
     return QIcon(pm);
 }
 
+inline QIcon dockTop(QColor c, int sz = 24) {
+    QPixmap pm = makePixmap(sz);
+    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
+    QPen pen(c, sz * 0.11f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    p.setPen(pen);
+    // Стрелка вверх — "прижать к верху экрана"
+    p.drawLine(QPointF(sz*0.24f, sz*0.62f), QPointF(sz*0.5f, sz*0.30f));
+    p.drawLine(QPointF(sz*0.5f,  sz*0.30f), QPointF(sz*0.76f, sz*0.62f));
+    // Полоса — "во всю ширину"
+    p.drawLine(QPointF(sz*0.16f, sz*0.84f), QPointF(sz*0.84f, sz*0.84f));
+    return QIcon(pm);
+}
+
 } // namespace Ico

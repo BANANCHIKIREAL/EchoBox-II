@@ -10,6 +10,7 @@
 #include "discordrpc.h"
 
 #include <QApplication>
+#include <QScreen>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QToolButton>
@@ -81,7 +82,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "1.4.0-beta.1";
+static const QString kAppVersion = "1.4.0-beta.2";
 static const QString kUpdateApiUrl =
     "https://api.github.com/repos/BANANCHIKIREAL/EchoBox-II/releases/latest";
 
@@ -583,6 +584,13 @@ void MainWindow::setupUi() {
     miniClose->setIcon(Ico::closeIcon(mc, 12)); miniClose->setIconSize({12,12});
     miniClose->setToolTip("Закрыть");
 
+    // На всю ширину экрана, прижать к верху
+    m_miniDockBtn = new QToolButton(this);
+    m_miniDockBtn->setObjectName("toggleBtn"); m_miniDockBtn->setFixedSize(26,26);
+    m_miniDockBtn->setCheckable(true);
+    m_miniDockBtn->setIcon(Ico::dockTop(tc, 14)); m_miniDockBtn->setIconSize({14,14});
+    m_miniDockBtn->setToolTip("На всю ширину экрана, к верху");
+
     m_miniWaveform = new WaveformSlider(this);
     m_miniWaveform->setFixedHeight(36);
     m_miniWaveform->setMinimumWidth(80);
@@ -601,6 +609,7 @@ void MainWindow::setupUi() {
     miniL->addWidget(m_miniMuteBtn);
     miniL->addWidget(m_miniVolSlider);
     miniL->addSpacing(2);
+    miniL->addWidget(m_miniDockBtn);
     miniL->addWidget(miniExpand);
     miniL->addWidget(miniMinimize);
     miniL->addWidget(miniClose);
@@ -611,6 +620,7 @@ void MainWindow::setupUi() {
     connect(miniExpand,       &QToolButton::clicked, this, &MainWindow::toggleMiniPlayer);
     connect(miniMinimize,     &QToolButton::clicked, this, &MainWindow::showMinimized);
     connect(miniClose,        &QToolButton::clicked, this, &MainWindow::close);
+    connect(m_miniDockBtn,    &QToolButton::clicked, this, &MainWindow::toggleMiniDock);
     connect(m_miniPlayBtn,    &QToolButton::clicked, this, &MainWindow::togglePlayPause);
     connect(m_miniShuffleBtn, &QToolButton::clicked, this, &MainWindow::toggleShuffle);
     connect(m_miniRepeatBtn,  &QToolButton::clicked, this, &MainWindow::cycleRepeat);
@@ -2203,6 +2213,11 @@ void MainWindow::toggleMiniPlayer() {
         setMaximumHeight(52);
         resize(720, 52);
     } else {
+        // Выходим из мини-режима — если панель была прижата к верху, сбрасываем
+        if (m_miniDocked) {
+            m_miniDocked = false;
+            if (m_miniDockBtn) m_miniDockBtn->setChecked(false);
+        }
         setMinimumSize(720, 540);
         setMaximumHeight(QWIDGETSIZE_MAX);
         resize(940, 660);
@@ -2215,6 +2230,22 @@ void MainWindow::toggleMiniPlayer() {
     show();
 
     if (m_miniPlayerAct) m_miniPlayerAct->setChecked(m_miniPlayer);
+}
+
+void MainWindow::toggleMiniDock() {
+    QScreen *scr = screen();
+    if (!scr) scr = QGuiApplication::primaryScreen();
+    if (!scr) return;
+
+    m_miniDocked = !m_miniDocked;
+    const QRect avail = scr->availableGeometry();
+
+    if (m_miniDocked) {
+        m_miniUndockedGeometry = geometry();
+        setGeometry(avail.left(), avail.top(), avail.width(), height());
+    } else if (m_miniUndockedGeometry.isValid()) {
+        setGeometry(m_miniUndockedGeometry);
+    }
 }
 
 void MainWindow::toggleAlwaysOnTop() {
