@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white"/>
   <img src="https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white"/>
   <img src="https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-red?style=for-the-badge"/>
-  <img src="https://img.shields.io/badge/version-1.4.0--beta.1-blue?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/version-1.4.0--beta.2-blue?style=for-the-badge"/>
 </p>
 
 <p align="center">
@@ -185,6 +185,14 @@ EchoBox-II/
 ---
 
 ## История версий
+
+### 🧪 v1.4.0-beta.2
+> 19 августа 2026
+
+**Новые функции**
+- Мини-плеер можно прижать к самому верху экрана на всю его ширину (кнопка-стрелка в мини-панели) — повторное нажатие возвращает прежние размер и положение окна
+
+---
 
 ### 🧪 v1.4.0-beta.1
 > 19 августа 2026
