@@ -175,4 +175,23 @@ inline QIcon expand(QColor c, int sz = 24) {
     return QIcon(pm);
 }
 
+inline QIcon minimize(QColor c, int sz = 24) {
+    QPixmap pm = makePixmap(sz);
+    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
+    QPen pen(c, sz * 0.11f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    p.setPen(pen);
+    p.drawLine(QPointF(sz*0.18f, sz*0.5f), QPointF(sz*0.82f, sz*0.5f));
+    return QIcon(pm);
+}
+
+inline QIcon closeIcon(QColor c, int sz = 24) {
+    QPixmap pm = makePixmap(sz);
+    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
+    QPen pen(c, sz * 0.11f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    p.setPen(pen);
+    p.drawLine(QPointF(sz*0.22f, sz*0.22f), QPointF(sz*0.78f, sz*0.78f));
+    p.drawLine(QPointF(sz*0.78f, sz*0.22f), QPointF(sz*0.22f, sz*0.78f));
+    return QIcon(pm);
+}
+
 } // namespace Ico

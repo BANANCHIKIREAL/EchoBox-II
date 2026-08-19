@@ -57,11 +57,33 @@
 #include <QAudioSource>
 #include <QMediaDevices>
 #include <QDialogButtonBox>
+#include <QProcess>
+#include <QDateTime>
+#include <QCoreApplication>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QDesktopServices>
+#include <QPushButton>
 #include <functional>
 #include <numeric>
 #include <algorithm>
 
+// ─── APO shared-memory bridge (Windows) ──────────────────────────────────────
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include "../apo/ring.h"
+
 // ─── Static data ─────────────────────────────────────────────────────────────
+
+static const QString kAppVersion = "1.4.0-beta.1";
+static const QString kUpdateApiUrl =
+    "https://api.github.com/repos/BANANCHIKIREAL/EchoBox-II/releases/latest";
 
 const QStringList MainWindow::VIDEO_EXTS = {"mp4","mkv","avi","mov","webm","flv","wmv","m2ts"};
 const QStringList MainWindow::MEDIA_FILTER = {
@@ -199,6 +221,8 @@ MainWindow::MainWindow(QWidget *parent)
     // Discord RPC — замени ID на свой: discord.com/developers/applications
     m_discord = new DiscordRPC("1516933454309228684", this);
 
+    m_streamArtNam = new QNetworkAccessManager(this);
+
     // Crossfade fade-in timer
     m_fadeInTimer = new QTimer(this);
     m_fadeInTimer->setInterval(40);
@@ -222,9 +246,12 @@ MainWindow::MainWindow(QWidget *parent)
 
     const QIcon icon(createLogo(128));
     setWindowIcon(icon);
+
+    // Тихая фоновая проверка обновлений (не мешает старту, не спамит окнами)
+    QTimer::singleShot(3000, this, [this]{ checkForUpdates(false); });
 }
 
-MainWindow::~MainWindow() { stopMicRouting(); saveSettings(); }
+MainWindow::~MainWindow() { apoCloseRing(); saveSettings(); }
 
 // ─── Menu bar ────────────────────────────────────────────────────────────────
 
@@ -234,6 +261,8 @@ void MainWindow::setupMenuBar() {
     fm->addAction("&Открыть файлы...", QKeySequence(Qt::CTRL | Qt::Key_O),
                   this, &MainWindow::openFiles);
     fm->addAction("Открыть &папку...", this, &MainWindow::openFolder);
+    fm->addAction("🔗 Открыть по &ссылке...", QKeySequence(Qt::CTRL | Qt::Key_U),
+                  this, &MainWindow::openUrlDialog);
     fm->addAction("📚 Сканировать библиотеку", this, &MainWindow::scanLibrary);
     m_recentMenu = fm->addMenu("&Недавние файлы");
     fm->addSeparator();
@@ -312,7 +341,9 @@ void MainWindow::setupMenuBar() {
     stMenu->addAction("Параметры...", QKeySequence(Qt::CTRL | Qt::Key_Comma),
                       this, &MainWindow::openSettings);
 
-    menuBar()->addMenu("&Справка")->addAction("О программе", this, &MainWindow::showAbout);
+    QMenu *helpMenu = menuBar()->addMenu("&Справка");
+    helpMenu->addAction("О программе", this, &MainWindow::showAbout);
+    helpMenu->addAction("Проверить обновления...", [this]{ checkForUpdates(true); });
 }
 
 // ─── UI ──────────────────────────────────────────────────────────────────────
@@ -448,10 +479,15 @@ void MainWindow::setupUi() {
     m_speedCombo->setToolTip("Скорость воспроизведения");
     m_speedCombo->setFixedWidth(68);
 
-    m_micBtn = mkBtn("Воспроизвести музыку в микрофон\n(нужен виртуальный кабель, напр. VB-Audio)", "toggleBtn", 34);
+
+    // Музыка → микрофон (через EchoBox APO, установи apo\install.bat)
+    m_micBtn = mkBtn("ЛКМ — музыка в микрофон вкл/выкл\nПКМ — громкость и «только музыка»", "toggleBtn", 30);
     m_micBtn->setCheckable(true);
-    m_micBtn->setIcon(Ico::microphone(QColor(0xa6, 0xad, 0xc8), 20));
-    m_micBtn->setIconSize({20, 20});
+    m_micBtn->setIcon(Ico::microphone(QColor(0xa6, 0xad, 0xc8), 18));
+    m_micBtn->setIconSize({18, 18});
+    m_micBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_micBtn, &QToolButton::customContextMenuRequested,
+            this, [this]{ showMicMenu(); });
 
     QHBoxLayout *c2 = new QHBoxLayout;
     c2->setSpacing(6);
@@ -536,6 +572,17 @@ void MainWindow::setupUi() {
     miniExpand->setIcon(Ico::expand(mc, 13)); miniExpand->setIconSize({13,13});
     miniExpand->setToolTip("Полный режим  F11");
 
+    // Свернуть / закрыть — без системной рамки в мини-режиме своих кнопок нет
+    auto *miniMinimize = new QToolButton(this);
+    miniMinimize->setObjectName("ctrlBtn"); miniMinimize->setFixedSize(26,26);
+    miniMinimize->setIcon(Ico::minimize(mc, 13)); miniMinimize->setIconSize({13,13});
+    miniMinimize->setToolTip("Свернуть");
+
+    auto *miniClose = new QToolButton(this);
+    miniClose->setObjectName("ctrlBtn"); miniClose->setFixedSize(26,26);
+    miniClose->setIcon(Ico::closeIcon(mc, 12)); miniClose->setIconSize({12,12});
+    miniClose->setToolTip("Закрыть");
+
     m_miniWaveform = new WaveformSlider(this);
     m_miniWaveform->setFixedHeight(36);
     m_miniWaveform->setMinimumWidth(80);
@@ -555,16 +602,25 @@ void MainWindow::setupUi() {
     miniL->addWidget(m_miniVolSlider);
     miniL->addSpacing(2);
     miniL->addWidget(miniExpand);
+    miniL->addWidget(miniMinimize);
+    miniL->addWidget(miniClose);
     root->addWidget(m_miniBar);
 
     connect(miniPrev,         &QToolButton::clicked, this, &MainWindow::previous);
     connect(miniNext,         &QToolButton::clicked, this, &MainWindow::next);
     connect(miniExpand,       &QToolButton::clicked, this, &MainWindow::toggleMiniPlayer);
+    connect(miniMinimize,     &QToolButton::clicked, this, &MainWindow::showMinimized);
+    connect(miniClose,        &QToolButton::clicked, this, &MainWindow::close);
     connect(m_miniPlayBtn,    &QToolButton::clicked, this, &MainWindow::togglePlayPause);
     connect(m_miniShuffleBtn, &QToolButton::clicked, this, &MainWindow::toggleShuffle);
     connect(m_miniRepeatBtn,  &QToolButton::clicked, this, &MainWindow::cycleRepeat);
     connect(m_miniMuteBtn,    &QToolButton::clicked, this, &MainWindow::toggleMute);
     connect(m_miniVolSlider,  &QSlider::valueChanged, this, &MainWindow::setVolume);
+
+    // Мини-плеер безрамочный — эти виджеты служат "ручкой" для перетаскивания окна
+    m_miniBar->installEventFilter(this);
+    m_miniTitle->installEventFilter(this);
+    m_miniAlbumArt->installEventFilter(this);
 
     // ══ PLAYLIST PANEL ═══════════════════════════════════════════════════════
     m_playlistPanel = new QWidget(this);
@@ -708,8 +764,8 @@ void MainWindow::setupConnections() {
     connect(m_nextBtn,      &QToolButton::clicked, this, &MainWindow::next);
     connect(m_shuffleBtn,   &QToolButton::clicked, this, &MainWindow::toggleShuffle);
     connect(m_repeatBtn,    &QToolButton::clicked, this, &MainWindow::cycleRepeat);
-    connect(m_micBtn,       &QToolButton::clicked, this, &MainWindow::toggleMicRouting);
     connect(m_muteBtn,      &QToolButton::clicked, this, &MainWindow::toggleMute);
+    connect(m_micBtn,       &QToolButton::clicked, this, &MainWindow::toggleMicRouting);
     connect(m_volumeSlider, &QSlider::valueChanged, this, &MainWindow::setVolume);
     connect(m_speedCombo,   QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::onSpeedChanged);
@@ -721,6 +777,7 @@ void MainWindow::setupConnections() {
     });
     // Share peaks and keep mini waveform in sync
     connect(m_seekSlider, &WaveformSlider::peaksReady, m_miniWaveform, &WaveformSlider::setPeaks);
+    connect(m_seekSlider, &WaveformSlider::peaksReady, this, &MainWindow::onWaveformPeaksReady);
     connect(m_miniWaveform, &WaveformSlider::sliderPressed,  [this]{ m_seeking = true; });
     connect(m_miniWaveform, &WaveformSlider::sliderReleased, [this]{
         m_player->setPosition(m_miniWaveform->value());
@@ -755,6 +812,23 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *ev) {
     if (obj == m_timeLabel && ev->type() == QEvent::MouseButtonPress) {
         toggleRemainingTime();
         return true;
+    }
+    // Мини-плеер безрамочный (нет системного заголовка) — тащим окно за
+    // обложку/название/пустое место панели вместо системной шапки
+    if (m_miniPlayer && (obj == m_miniBar || obj == m_miniTitle || obj == m_miniAlbumArt)) {
+        if (ev->type() == QEvent::MouseButtonPress) {
+            auto *me = static_cast<QMouseEvent*>(ev);
+            if (me->button() == Qt::LeftButton) {
+                m_miniDragging   = true;
+                m_miniDragOffset = me->globalPosition().toPoint() - frameGeometry().topLeft();
+            }
+        } else if (ev->type() == QEvent::MouseMove) {
+            auto *me = static_cast<QMouseEvent*>(ev);
+            if (m_miniDragging && (me->buttons() & Qt::LeftButton))
+                move(me->globalPosition().toPoint() - m_miniDragOffset);
+        } else if (ev->type() == QEvent::MouseButtonRelease) {
+            m_miniDragging = false;
+        }
     }
     return QMainWindow::eventFilter(obj, ev);
 }
@@ -1246,7 +1320,7 @@ void MainWindow::savePlaylist() {
     QTextStream out(&f);
     out << "#EXTM3U\n";
     for (const QUrl &u : m_playlist)
-        out << u.toLocalFile() << "\n";
+        out << (u.isLocalFile() ? u.toLocalFile() : u.toString()) << "\n";
     statusBar()->showMessage("Плейлист сохранён: " + path, 4000);
 }
 
@@ -1259,12 +1333,17 @@ void MainWindow::loadPlaylist() {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return;
     QList<QUrl> urls;
+    QStringList streamLinks;
     QTextStream in(&f);
     while (!in.atEnd()) {
         QString line = in.readLine().trimmed();
         if (line.isEmpty() || line.startsWith('#')) continue;
         if (QFile::exists(line)) urls.append(QUrl::fromLocalFile(line));
+        else if (line.startsWith("http://", Qt::CaseInsensitive) ||
+                 line.startsWith("https://", Qt::CaseInsensitive))
+            streamLinks.append(line);
     }
+    for (const QString &link : streamLinks) openStreamUrl(link);
     addFiles(urls);
 }
 
@@ -1380,8 +1459,8 @@ void MainWindow::removeSelectedTracks() {
     // renumber
     for (int i = 0; i < m_playlistWidget->count(); ++i) {
         QListWidgetItem *it = m_playlistWidget->item(i);
-        QString fn = QFileInfo(it->data(Qt::UserRole).value<QUrl>().toLocalFile()).fileName();
-        it->setText(QString("  %1.  %2").arg(i+1).arg(fn));
+        const QUrl u = it->data(Qt::UserRole).value<QUrl>();
+        it->setText(QString("  %1.  %2").arg(i+1).arg(playlistRowLabel(u)));
     }
     if (m_currentIndex >= m_playlist.size()) m_currentIndex = m_playlist.size() - 1;
     updatePlaylistInfo();
@@ -1569,34 +1648,398 @@ void MainWindow::playTrack(int index) {
     }
 
     m_currentIndex = index;
-    m_player->setSource(m_playlist[index]);
-    m_player->play();
-    applyVolume();
+    const QUrl url = m_playlist[index];
 
     m_playlistWidget->setCurrentRow(index);
     setCurrentTrackVisual(index);
 
-    const QString name = QFileInfo(m_playlist[index].toLocalFile()).completeBaseName();
+    const QString name   = trackDisplayTitle(url);
+    const QString artist = trackDisplayArtist(url);
+    const QString mini   = artist.isEmpty() ? name : artist + "  —  " + name;
     m_titleLabel->setText(name);
-    m_miniTitle->setText(name);
-    m_artistLabel->setText("");
+    m_miniTitle->setText(mini);
+    m_artistLabel->setText(artist);
     m_albumLabel->setText("");
-    setWindowTitle("EchoBox II  —  " + name);
-    statusBar()->showMessage(m_playlist[index].toLocalFile());
+    setWindowTitle("EchoBox II  —  " + mini);
 
-    if (isVideoFile(m_playlist[index]))
+    if (!url.isLocalFile()) {
+        // Ссылка на музыку (SoundCloud/YouTube/др.) — сначала получить
+        // прямой аудиопоток, реальный setSource() произойдёт асинхронно
+        statusBar()->showMessage("Получение потока: " + name + " …");
+        // Обложка могла быть скачана и закэширована при прошлом воспроизведении
+        const QString icoFile = trackIconPath(url);
+        m_coverPixmap = QFile::exists(icoFile) ? QPixmap(icoFile) : QPixmap();
+        m_mediaStack->setCurrentWidget(m_albumArt);
+        updateAlbumArt();
+        beginStreamPlayback(index, url);
+        return;
+    }
+
+    m_player->setSource(url);
+    m_player->play();
+    applyVolume();
+
+    statusBar()->showMessage(url.toLocalFile());
+
+    if (isVideoFile(url))
         m_mediaStack->setCurrentWidget(m_videoWidget);
     else {
         // Load cached icon file as album art fallback (manual or scanned)
-        const QString icoFile = trackIconPath(m_playlist[index]);
+        const QString icoFile = trackIconPath(url);
         m_coverPixmap = QFile::exists(icoFile) ? QPixmap(icoFile) : QPixmap();
         m_mediaStack->setCurrentWidget(m_albumArt);
         updateAlbumArt();
     }
 
-    addRecentFile(m_playlist[index].toLocalFile());
+    addRecentFile(url.toLocalFile());
 
     // Discord Rich Presence
+    if (m_discord && m_cfg.discordEnabled)
+        m_discord->updateActivity(m_titleLabel->text(), m_artistLabel->text());
+}
+
+// ─── Ссылки на музыку (SoundCloud/YouTube/др. через yt-dlp, прямые URL) ───────
+//
+// Плейлист хранит ИСХОДНУЮ ссылку пользователя как QUrl (стабильный ключ —
+// сохраняется в плейлисты/M3U, участвует в поиске дублей). Для ссылок,
+// которые требуют yt-dlp (SoundCloud/YouTube/др.), трек СКАЧИВАЕТСЯ целиком
+// на диск перед воспроизведением и дальше играется как обычный локальный
+// файл — тот же путь, что уже надёжно работает для остальной библиотеки.
+// Отдавать плееру напрямую подписанный CDN-адрес ненадёжно: он собран из
+// HLS-сегментов и/или требует специфичных HTTP-заголовков (например,
+// googlevideo.com у YouTube без верного User-Agent отвечает 403) — а такое
+// умеет только сам yt-dlp, не QMediaPlayer.
+
+QString MainWindow::ytDlpPath() const {
+    const QString bundled = QCoreApplication::applicationDirPath() + "/yt-dlp.exe";
+    if (QFile::exists(bundled)) return bundled;
+    return "yt-dlp";
+}
+
+QString MainWindow::streamCacheDir() const {
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/streamcache";
+}
+
+bool MainWindow::looksLikeDirectMediaUrl(const QUrl &url) const {
+    static const QStringList exts = {
+        "mp3","ogg","wav","flac","m4a","aac","opus","wma","webm"
+    };
+    return exts.contains(QFileInfo(url.path()).suffix().toLower());
+}
+
+QString MainWindow::trackDisplayTitle(const QUrl &url) const {
+    if (url.isLocalFile())
+        return QFileInfo(url.toLocalFile()).completeBaseName();
+    const auto it = m_streamTracks.constFind(url);
+    if (it != m_streamTracks.constEnd() && !it->title.isEmpty())
+        return it->title;
+    return url.toString();
+}
+
+QString MainWindow::trackDisplayArtist(const QUrl &url) const {
+    if (url.isLocalFile()) return QString();
+    const auto it = m_streamTracks.constFind(url);
+    return it != m_streamTracks.constEnd() ? it->artist : QString();
+}
+
+QString MainWindow::playlistRowLabel(const QUrl &url) const {
+    if (url.isLocalFile())
+        return QFileInfo(url.toLocalFile()).fileName();
+    const QString title  = trackDisplayTitle(url);
+    const QString artist = trackDisplayArtist(url);
+    return "🔗 " + (artist.isEmpty() ? title : artist + "  —  " + title);
+}
+
+void MainWindow::openUrlDialog() {
+    bool ok = false;
+    const QString link = QInputDialog::getText(
+        this, "Открыть по ссылке",
+        "Ссылка на трек (SoundCloud, YouTube, Bandcamp, прямая ссылка\n"
+        "на аудиофайл и т.п. — всё, что понимает yt-dlp):",
+        QLineEdit::Normal, QString(), &ok).trimmed();
+    if (!ok || link.isEmpty()) return;
+    openStreamUrl(link);
+}
+
+void MainWindow::openStreamUrl(const QString &link) {
+    const QUrl url = QUrl::fromUserInput(link);
+    if (!url.isValid() || (url.scheme() != "http" && url.scheme() != "https")) {
+        statusBar()->showMessage("Некорректная ссылка: " + link, 5000);
+        return;
+    }
+    if (m_playlist.contains(url)) {
+        statusBar()->showMessage("Этот трек уже в плейлисте", 3000);
+        return;
+    }
+
+    if (looksLikeDirectMediaUrl(url)) {
+        addDirectStreamUrl(url);
+        return;
+    }
+
+    const int index = insertStreamPlaceholder(url);
+    const bool shouldAutoplay = (m_playlist.size() == 1);
+    m_streamResolving.insert(url);
+    downloadStreamTrack(url, [this, url, index, shouldAutoplay]
+            (bool ok, QString localPath, QString title, QString artist, QString thumb) {
+        m_streamResolving.remove(url);
+        updateStreamPlaceholder(url, ok, localPath, title, artist, thumb);
+        if (shouldAutoplay) {
+            if (ok) playTrack(index);
+            else    statusBar()->showMessage("Не удалось получить трек по ссылке", 6000);
+        }
+    });
+}
+
+void MainWindow::addDirectStreamUrl(const QUrl &url) {
+    const bool wasEmpty = m_playlist.isEmpty();
+
+    QString name = QFileInfo(url.path()).fileName();
+    if (name.isEmpty()) name = url.toString();
+
+    StreamTrackInfo info;
+    info.title      = name;
+    info.isDirectUrl = true;
+    m_streamTracks[url] = info;
+
+    m_playlist.append(url);
+    const int index = m_playlist.size() - 1;
+    auto *item = new QListWidgetItem(QString("  %1.  🔗 %2").arg(index + 1).arg(name));
+    item->setData(Qt::UserRole, url);
+    item->setData(Qt::UserRole + 2, name);
+    item->setToolTip(url.toString());
+    m_playlistWidget->addItem(item);
+
+    updatePlaylistInfo();
+    updateDuplicateHighlights();
+    if (wasEmpty) playTrack(index);
+}
+
+int MainWindow::insertStreamPlaceholder(const QUrl &pageUrl) {
+    StreamTrackInfo info;
+    info.title = "Загрузка…";
+    m_streamTracks[pageUrl] = info;
+
+    m_playlist.append(pageUrl);
+    const int index = m_playlist.size() - 1;
+
+    auto *item = new QListWidgetItem(QString("  %1.  🔗 Загрузка…").arg(index + 1));
+    item->setData(Qt::UserRole, pageUrl);
+    item->setToolTip(pageUrl.toString());
+    m_playlistWidget->addItem(item);
+
+    updatePlaylistInfo();
+    return index;
+}
+
+void MainWindow::updateStreamPlaceholder(const QUrl &pageUrl, bool ok, const QString &localPath,
+                                          const QString &title, const QString &artist,
+                                          const QString &thumbnailUrl) {
+    const int idx = m_playlist.indexOf(pageUrl);
+    if (idx < 0) return;
+
+    QListWidgetItem *item = m_playlistWidget->item(idx);
+
+    if (!ok) {
+        if (item) item->setText(QString("  %1.  ⚠ Ошибка загрузки").arg(idx + 1));
+        return;
+    }
+
+    StreamTrackInfo &info = m_streamTracks[pageUrl];
+    info.localPath     = localPath;
+    info.title         = title;
+    info.artist        = artist;
+    info.thumbnailUrl  = thumbnailUrl;
+
+    const QString label = artist.isEmpty() ? title : artist + "  —  " + title;
+    if (item) {
+        item->setText(QString("  %1.  🔗 %2").arg(idx + 1).arg(label));
+        item->setData(Qt::UserRole + 2, title);
+        item->setData(Qt::UserRole + 3, artist);
+    }
+    statusBar()->showMessage("Трек готов: " + label, 4000);
+
+    if (idx == m_currentIndex) {
+        m_titleLabel->setText(title);
+        m_miniTitle->setText(label);
+        m_artistLabel->setText(artist);
+        setWindowTitle("EchoBox II  —  " + label);
+    }
+
+    updateDuplicateHighlights();
+    fetchStreamThumbnail(pageUrl, thumbnailUrl);
+}
+
+void MainWindow::fetchStreamThumbnail(const QUrl &pageUrl, const QString &thumbnailUrl) {
+    if (thumbnailUrl.isEmpty()) return;
+
+    const QString icoFile = trackIconPath(pageUrl);
+    if (QFile::exists(icoFile)) {
+        // Уже закэшировано с прошлого раза — просто применить
+        const int idx = m_playlist.indexOf(pageUrl);
+        if (idx < 0) return;
+        if (m_cfg.showTrackIcons) {
+            QListWidgetItem *item = m_playlistWidget->item(idx);
+            if (item) applyTrackIcon(item, pageUrl);
+        }
+        if (idx == m_currentIndex) {
+            m_coverPixmap = QPixmap(icoFile);
+            updateAlbumArt();
+        }
+        return;
+    }
+
+    QNetworkReply *reply = m_streamArtNam->get(QNetworkRequest(QUrl(thumbnailUrl)));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, pageUrl, icoFile]{
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) return;
+
+        QPixmap pm;
+        if (!pm.loadFromData(reply->readAll())) return;
+
+        QDir().mkpath(QFileInfo(icoFile).absolutePath());
+        // Полноразмерная обложка (до 512px) — для показа в плеере
+        const QPixmap large = (pm.width() > 512 || pm.height() > 512)
+            ? pm.scaled(512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+            : pm;
+        large.save(icoFile, "PNG");
+
+        const int idx = m_playlist.indexOf(pageUrl);
+        if (idx < 0) return;
+
+        if (m_cfg.showTrackIcons) {
+            QListWidgetItem *item = m_playlistWidget->item(idx);
+            if (item) item->setIcon(QIcon(pm.scaled(36, 36, Qt::KeepAspectRatioByExpanding,
+                                                     Qt::SmoothTransformation).copy(0, 0, 36, 36)));
+        }
+        if (idx == m_currentIndex) {
+            m_coverPixmap = large;
+            updateAlbumArt();
+        }
+    });
+}
+
+void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
+        std::function<void(bool, QString, QString, QString, QString)> callback) {
+    const QString cacheDir = streamCacheDir();
+    QDir().mkpath(cacheDir);
+    const QString hash = QCryptographicHash::hash(
+        pageUrl.toString().toUtf8(), QCryptographicHash::Md5).toHex();
+    const QString outTemplate = cacheDir + "/" + hash + ".%(ext)s";
+
+    auto *proc = new QProcess(this);
+    const QStringList args = {
+        "--no-playlist", "--no-warnings", "--no-progress",
+        // android/web-фоллбэк обходит текущий SABR-эксперимент YouTube, из-за
+        // которого чистый audio-only формат недоступен для скачивания — для
+        // других сайтов (SoundCloud и т.п.) этот youtube-специфичный аргумент
+        // просто игнорируется
+        "--extractor-args", "youtube:player_client=android,web",
+        "-f", "bestaudio/best", "--print-json", "-o", outTemplate, pageUrl.toString()
+    };
+
+    connect(proc, &QProcess::errorOccurred, this,
+        [this, proc, callback](QProcess::ProcessError err) {
+            if (err != QProcess::FailedToStart) return;
+            proc->deleteLater();
+            if (!m_ytDlpMissingWarned) {
+                m_ytDlpMissingWarned = true;
+                QMessageBox::warning(this, "yt-dlp не найден",
+                    "Для воспроизведения по ссылке (SoundCloud, YouTube и т.п.) нужна "
+                    "утилита yt-dlp.\n\n"
+                    "Установи её, например: pip install yt-dlp (или winget install "
+                    "yt-dlp.yt-dlp), и убедись, что она доступна в PATH — либо просто "
+                    "положи yt-dlp.exe рядом с EchoBoxII.exe.");
+            }
+            callback(false, QString(), QString(), QString(), QString());
+        });
+
+    connect(proc, &QProcess::finished, this,
+        [this, proc, pageUrl, hash, cacheDir, callback](int exitCode, QProcess::ExitStatus exitStatus) {
+            proc->deleteLater();
+            if (exitStatus != QProcess::NormalExit || exitCode != 0) {
+                callback(false, QString(), QString(), QString(), QString());
+                return;
+            }
+
+            // Файл сохранён yt-dlp сам под расширением, которое выбрало (webm/m4a/opus/…)
+            QDir dir(cacheDir);
+            const QStringList found = dir.entryList({hash + ".*"}, QDir::Files);
+            if (found.isEmpty()) {
+                callback(false, QString(), QString(), QString(), QString());
+                return;
+            }
+            const QString localPath = dir.filePath(found.first());
+
+            // --print-json печатает метаданные одной JSON-строкой в stdout уже
+            // после скачивания — берём последнюю валидную JSON-строку
+            const QList<QByteArray> lines = proc->readAllStandardOutput().split('\n');
+            QJsonObject obj;
+            for (auto it = lines.crbegin(); it != lines.crend(); ++it) {
+                const QJsonDocument doc = QJsonDocument::fromJson(*it);
+                if (doc.isObject()) { obj = doc.object(); break; }
+            }
+
+            QString title  = obj.value("title").toString();
+            QString artist = obj.value("artist").toString();
+            if (artist.isEmpty()) artist = obj.value("uploader").toString();
+            if (title.isEmpty())  title  = pageUrl.toString();
+            const QString thumb = obj.value("thumbnail").toString();
+
+            callback(true, localPath, title, artist, thumb);
+        });
+
+    proc->start(ytDlpPath(), args);
+}
+
+void MainWindow::beginStreamPlayback(int index, const QUrl &pageUrl) {
+    const auto it = m_streamTracks.find(pageUrl);
+
+    if (it != m_streamTracks.end() && it->isDirectUrl) {
+        commitStreamPlayback(index, pageUrl, pageUrl);
+        return;
+    }
+    if (it != m_streamTracks.end() && !it->localPath.isEmpty() && QFile::exists(it->localPath)) {
+        commitStreamPlayback(index, pageUrl, QUrl::fromLocalFile(it->localPath));
+        return;
+    }
+
+    // Защита от гонки: если пользователь повторно жмёт play/трек, пока трек ещё
+    // скачивается, не запускать второй параллельный процесс yt-dlp на тот же трек
+    if (m_streamResolving.contains(pageUrl)) return;
+    m_streamResolving.insert(pageUrl);
+
+    statusBar()->showMessage("Загрузка трека: " + trackDisplayTitle(pageUrl) + " …");
+    downloadStreamTrack(pageUrl, [this, index, pageUrl]
+            (bool ok, QString localPath, QString title, QString artist, QString thumb) {
+        m_streamResolving.remove(pageUrl);
+        updateStreamPlaceholder(pageUrl, ok, localPath, title, artist, thumb);
+        if (!ok) {
+            statusBar()->showMessage("Не удалось скачать трек: " + pageUrl.toString(), 6000);
+            return;
+        }
+        // Пользователь мог переключиться на другой трек, пока шло скачивание
+        if (m_currentIndex != index || m_playlist.value(index) != pageUrl) return;
+        commitStreamPlayback(index, pageUrl, QUrl::fromLocalFile(localPath));
+    });
+}
+
+void MainWindow::commitStreamPlayback(int index, const QUrl &pageUrl, const QUrl &mediaSource) {
+    Q_UNUSED(index);
+
+    m_player->setSource(mediaSource);
+    m_player->play();
+    applyVolume();
+
+    const QString name   = trackDisplayTitle(pageUrl);
+    const QString artist = trackDisplayArtist(pageUrl);
+    const QString mini   = artist.isEmpty() ? name : artist + "  —  " + name;
+    m_titleLabel->setText(name);
+    m_miniTitle->setText(mini);
+    m_artistLabel->setText(artist);
+    setWindowTitle("EchoBox II  —  " + mini);
+    statusBar()->showMessage(pageUrl.toString());
+
     if (m_discord && m_cfg.discordEnabled)
         m_discord->updateActivity(m_titleLabel->text(), m_artistLabel->text());
 }
@@ -1764,6 +2207,13 @@ void MainWindow::toggleMiniPlayer() {
         setMaximumHeight(QWIDGETSIZE_MAX);
         resize(940, 660);
     }
+
+    // Без системного заголовка в мини-режиме — окно можно таскать за саму
+    // панель (см. eventFilter). Изменение флагов скрывает окно, поэтому
+    // после него обязательно вызываем show().
+    setWindowFlag(Qt::FramelessWindowHint, m_miniPlayer);
+    show();
+
     if (m_miniPlayerAct) m_miniPlayerAct->setChecked(m_miniPlayer);
 }
 
@@ -1784,8 +2234,18 @@ void MainWindow::toggleRemainingTime() {
 void MainWindow::onDurationChanged(qint64 duration) {
     m_seekSlider->setRange(0, static_cast<int>(duration));
     m_miniWaveform->setRange(0, static_cast<int>(duration));
-    if (duration > 0)
-        m_seekSlider->loadWaveform(m_player->source(), duration);
+    if (duration > 0) {
+        const QUrl src = m_player->source();
+        const auto cached = m_waveformCache.constFind(src);
+        if (cached != m_waveformCache.constEnd()) {
+            // Уже decoded в этой сессии — не гонять декодер по новой
+            m_seekSlider->setPeaks(cached.value());
+            m_miniWaveform->setPeaks(cached.value());
+        } else {
+            m_waveformLoadingUrl = src;
+            m_seekSlider->loadWaveform(src, duration);
+        }
+    }
     updateTimeDisplay(m_player->position(), duration);
 
     // Store duration in list item
@@ -1793,6 +2253,13 @@ void MainWindow::onDurationChanged(qint64 duration) {
         QListWidgetItem *it = m_playlistWidget->item(m_currentIndex);
         if (it) it->setData(Qt::UserRole + 1, formatTime(duration));
     }
+}
+
+void MainWindow::onWaveformPeaksReady(QVector<float> peaks) {
+    // peaksReady стреляет и промежуточными, и финальными пиками — просто
+    // перезаписываем, последний вызов при декодировании всегда самый полный
+    if (m_waveformLoadingUrl.isValid())
+        m_waveformCache[m_waveformLoadingUrl] = peaks;
 }
 
 void MainWindow::onPositionChanged(qint64 position) {
@@ -1934,10 +2401,9 @@ void MainWindow::onAudioBuffer(const QAudioBuffer &buffer) {
         if (total > 0) m_aurora->setAmplitude(std::sqrt(rms / total));
     }
 
-    // Buffer music data for mic mixer tick to consume
-    if (m_micRouting && !m_micDevice.id().isEmpty())
-        m_musicMixBuf.append(
-            reinterpret_cast<const char *>(buffer.constData<float>()), buffer.byteCount());
+    // Push music into the APO ring so it gets mixed into the microphone
+    if (m_micRouting && m_apoRing)
+        apoFeed(buffer);
 }
 
 // ─── Visuals ─────────────────────────────────────────────────────────────────
@@ -2013,19 +2479,19 @@ void MainWindow::updateTimeDisplay(qint64 pos, qint64 dur) {
 
 void MainWindow::showAbout() {
     QMessageBox::about(this, "О программе EchoBox II",
-        "<h2 style='color:#cba6f7'>EchoBox II  v1.2.0</h2>"
+        "<h2 style='color:#cba6f7'>EchoBox II  v" + kAppVersion + "</h2>"
         "<p>Современный медиаплеер на <b>C++ / Qt6</b></p>"
         "<p>Форматы: MP3, FLAC, OGG, WAV, AAC, M4A, OPUS,<br>"
         "MP4, MKV, AVI, MOV, WebM и другие</p>"
         "<hr>"
         "<p><b>Возможности:</b></p>"
         "<ul style='margin:0;padding-left:16px'>"
+        "<li>Воспроизведение по ссылке — SoundCloud, YouTube и др. (Ctrl+U)</li>"
         "<li>Осциллограмма на слайдере перемотки</li>"
         "<li>Анимированный фон с частицами, реагирующий на музыку</li>"
         "<li>Умный поиск по названию, исполнителю и альбому</li>"
         "<li>Сканер библиотеки (Файл → Сканировать библиотеку)</li>"
         "<li>Кастомный шрифт интерфейса</li>"
-        "<li>Вывод музыки в микрофон через VB-Cable</li>"
         "<li>Discord Rich Presence</li>"
         "<li>Кроссфейд, память позиции, несколько плейлистов</li>"
         "</ul>"
@@ -2040,10 +2506,89 @@ void MainWindow::showAbout() {
         "<tr><td><b>↑/↓</b></td><td>Громкость ±5%</td></tr>"
         "<tr><td><b>Del</b></td><td>Удалить из плейлиста</td></tr>"
         "<tr><td><b>Ctrl+F</b></td><td>Фокус на поиск</td></tr>"
+        "<tr><td><b>Ctrl+U</b></td><td>Открыть по ссылке</td></tr>"
         "<tr><td><b>F11</b></td><td>Мини-плеер</td></tr>"
         "</table>"
         "<hr>"
         "<p style='color:#6c7086'>© 2026 BANANCHIKIREAL · MIT License</p>");
+}
+
+// ─── Обновления ──────────────────────────────────────────────────────────────
+
+static QVector<int> parseVersionNumbers(QString v) {
+    if (v.startsWith('v', Qt::CaseInsensitive)) v.remove(0, 1);
+    const int dashIdx = v.indexOf('-');
+    const QString numsPart = (dashIdx >= 0) ? v.left(dashIdx) : v;
+    QVector<int> nums;
+    for (const QString &part : numsPart.split('.'))
+        nums.append(part.toInt());
+    while (nums.size() < 3) nums.append(0);
+    return nums;
+}
+
+// true, если remote строго новее local (числа сравниваются по семверу;
+// при равных числах релиз без "-beta"/"-rc" и т.п. считается новее)
+static bool isNewerVersion(const QString &remote, const QString &local) {
+    const QVector<int> r = parseVersionNumbers(remote);
+    const QVector<int> l = parseVersionNumbers(local);
+    for (int i = 0; i < 3; ++i)
+        if (r[i] != l[i]) return r[i] > l[i];
+    const bool remotePre = remote.contains('-');
+    const bool localPre  = local.contains('-');
+    if (remotePre != localPre) return localPre && !remotePre;
+    return false;
+}
+
+void MainWindow::checkForUpdates(bool manual) {
+    QNetworkRequest req((QUrl(kUpdateApiUrl)));
+    req.setRawHeader("Accept", "application/vnd.github+json");
+    req.setRawHeader("User-Agent", "EchoBoxII-UpdateCheck");
+
+    QNetworkReply *reply = m_streamArtNam->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, manual]{
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            if (manual) statusBar()->showMessage("Не удалось проверить обновления", 5000);
+            return;
+        }
+
+        const QJsonObject obj = QJsonDocument::fromJson(reply->readAll()).object();
+        const QString tag   = obj.value("tag_name").toString();
+        const QString url   = obj.value("html_url").toString();
+        const QString notes = obj.value("body").toString();
+        if (tag.isEmpty()) {
+            if (manual) statusBar()->showMessage("Не удалось проверить обновления", 5000);
+            return;
+        }
+
+        if (!isNewerVersion(tag, kAppVersion)) {
+            if (manual) statusBar()->showMessage("У вас последняя версия", 4000);
+            return;
+        }
+
+        // При фоновой (не ручной) проверке не спамим одним и тем же
+        // релизом повторно, если пользователь уже его закрыл разок
+        const QString skipKey = "update/skippedVersion";
+        if (!manual && m_settings.value(skipKey).toString() == tag) return;
+
+        QMessageBox box(this);
+        box.setWindowTitle("Доступно обновление");
+        box.setTextFormat(Qt::RichText);
+        const QString notesHtml = notes.isEmpty() ? QString()
+            : ("<p>" + notes.toHtmlEscaped().left(600).replace("\n", "<br>") + "</p>");
+        box.setText(QString(
+            "<h3 style='color:#cba6f7'>EchoBox II %1</h3>"
+            "<p>У вас установлена версия %2</p>%3")
+                .arg(tag, kAppVersion, notesHtml));
+        QPushButton *downloadBtn = box.addButton("Скачать", QMessageBox::AcceptRole);
+        box.addButton(manual ? "Закрыть" : "Пропустить эту версию", QMessageBox::RejectRole);
+        box.exec();
+
+        if (box.clickedButton() == downloadBtn)
+            QDesktopServices::openUrl(QUrl(url));
+        else if (!manual)
+            m_settings.setValue(skipKey, tag);
+    });
 }
 
 // ─── Drag & Drop ─────────────────────────────────────────────────────────────
@@ -2053,7 +2598,12 @@ void MainWindow::dragEnterEvent(QDragEnterEvent *e) {
 }
 
 void MainWindow::dropEvent(QDropEvent *e) {
-    addFiles(e->mimeData()->urls());
+    QList<QUrl> localUrls;
+    for (const QUrl &u : e->mimeData()->urls()) {
+        if (u.isLocalFile()) localUrls.append(u);
+        else if (u.scheme() == "http" || u.scheme() == "https") openStreamUrl(u.toString());
+    }
+    addFiles(localUrls);
 }
 
 // ─── Keyboard ────────────────────────────────────────────────────────────────
@@ -2121,11 +2671,12 @@ void MainWindow::loadPlaylistState(int index) {
 
     m_playlistWidget->clear();
     for (int i = 0; i < m_playlist.size(); ++i) {
-        const QString name = QFileInfo(m_playlist[i].toLocalFile()).fileName();
+        const QUrl &u = m_playlist[i];
+        const QString name = playlistRowLabel(u);
         auto *item = new QListWidgetItem(QString("  %1.  %2").arg(i + 1).arg(name));
-        item->setData(Qt::UserRole, m_playlist[i]);
+        item->setData(Qt::UserRole, u);
         m_playlistWidget->addItem(item);
-        if (m_cfg.showTrackIcons) applyTrackIcon(item, m_playlist[i]);
+        if (m_cfg.showTrackIcons) applyTrackIcon(item, u);
     }
 
     if (m_currentIndex >= 0 && m_currentIndex < m_playlistWidget->count())
@@ -2142,10 +2693,10 @@ void MainWindow::loadPlaylistState(int index) {
     m_coverPixmap = QPixmap();
     updateAlbumArt();
 
-    // Scan for missing track icons in the background
+    // Scan for missing track icons in the background (local files only)
     QList<QUrl> noIcon;
     for (const QUrl &u : m_playlist)
-        if (!QFile::exists(trackIconPath(u)))
+        if (u.isLocalFile() && !QFile::exists(trackIconPath(u)))
             noIcon.append(u);
     if (!noIcon.isEmpty()) scheduleScan(noIcon);
 }
@@ -2433,157 +2984,6 @@ void MainWindow::loadPlaylistsFromFile() {
     loadPlaylistState(m_activePl);
 }
 
-// ─── Mic routing ─────────────────────────────────────────────────────────────
-
-// 10 ms of 48 kHz stereo Float32
-static constexpr int MIC_CHUNK = 48000 * 2 * int(sizeof(float)) / 100; // 3840 bytes
-
-static QByteArray mixFloat32(const char *music, const char *mic, int bytes) {
-    QByteArray out(bytes, 0);
-    const float *fm = reinterpret_cast<const float *>(music);
-    const float *fv = reinterpret_cast<const float *>(mic);
-    float       *fo = reinterpret_cast<float *>(out.data());
-    const int    n  = bytes / int(sizeof(float));
-    for (int i = 0; i < n; ++i)
-        fo[i] = qBound(-1.0f, fm[i] + fv[i], 1.0f);
-    return out;
-}
-
-void MainWindow::stopMicRouting() {
-    m_micRouting = false;
-    if (m_micTimer) { m_micTimer->stop(); delete m_micTimer; m_micTimer = nullptr; }
-    if (m_micSource) {
-        m_micSource->stop();
-        delete m_micSource;
-        m_micSource  = nullptr;
-        m_micCapture = nullptr;
-    }
-    if (m_micSink) {
-        m_micSink->stop();
-        delete m_micSink;
-        m_micSink   = nullptr;
-        m_micOutput = nullptr;
-    }
-    m_musicMixBuf.clear();
-    m_micDevice = QAudioDevice();
-    if (m_micBtn) m_micBtn->setChecked(false);
-}
-
-void MainWindow::micTimerTick() {
-    if (!m_micOutput || !m_micSink || m_micSink->state() == QAudio::StoppedState) {
-        statusBar()->showMessage("Ошибка вывода в микрофон — устройство недоступно", 4000);
-        stopMicRouting();
-        return;
-    }
-
-    // Read mic audio (voice passthrough)
-    QByteArray micData(MIC_CHUNK, 0);
-    if (m_micCapture && m_micSource && m_micSource->state() != QAudio::StoppedState) {
-        const qint64 avail = m_micSource->bytesAvailable();
-        if (avail > 0)
-            m_micCapture->read(micData.data(), qMin((qint64)MIC_CHUNK, avail));
-    }
-
-    // Take music from buffer accumulated by onAudioBuffer()
-    QByteArray musicData(MIC_CHUNK, 0);
-    if (!m_musicMixBuf.isEmpty()) {
-        const int take = qMin(MIC_CHUNK, (int)m_musicMixBuf.size());
-        memcpy(musicData.data(), m_musicMixBuf.constData(), take);
-        m_musicMixBuf.remove(0, take);
-        // Cap buffer to ~1 second to avoid runaway growth
-        if (m_musicMixBuf.size() > 384000)
-            m_musicMixBuf.remove(0, m_musicMixBuf.size() - 384000);
-    }
-
-    m_micOutput->write(mixFloat32(musicData.constData(), micData.constData(), MIC_CHUNK));
-}
-
-void MainWindow::toggleMicRouting() {
-    if (m_micRouting) {
-        stopMicRouting();
-        statusBar()->showMessage("Вывод в микрофон отключён", 2000);
-        return;
-    }
-
-    // Device picker dialog
-    QDialog dlg(this);
-    dlg.setWindowTitle("Вывод музыки в микрофон");
-    dlg.setMinimumWidth(440);
-    auto *vl = new QVBoxLayout(&dlg);
-
-    auto *hdr = new QLabel(
-        "<b>Выберите устройство вывода</b><br>"
-        "<small>Например: <i>CABLE Input (VB-Audio Virtual Cable)</i></small>");
-    hdr->setWordWrap(true);
-    vl->addWidget(hdr);
-
-    auto *list = new QListWidget(&dlg);
-    const auto devices = QMediaDevices::audioOutputs();
-    for (const auto &dev : devices)
-        list->addItem(new QListWidgetItem(dev.description()));
-    if (list->count() > 0) list->setCurrentRow(0);
-    vl->addWidget(list, 1);
-
-    auto *note = new QLabel(
-        "<i style='color:#6c7086'>"
-        "Установи «CABLE Input» здесь. "
-        "В Roblox/Discord установи «CABLE Output» как микрофон один раз — "
-        "после этого твой голос и музыка пойдут туда автоматически.</i>");
-    note->setWordWrap(true);
-    vl->addWidget(note);
-
-    auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    vl->addWidget(bb);
-
-    if (dlg.exec() != QDialog::Accepted || list->currentRow() < 0) {
-        if (m_micBtn) m_micBtn->setChecked(false);
-        return;
-    }
-
-    const QAudioDevice cableIn = devices.at(list->currentRow());
-
-    QAudioFormat fmt;
-    fmt.setSampleRate(48000);
-    fmt.setChannelCount(2);
-    fmt.setSampleFormat(QAudioFormat::Float);
-
-    // Output sink → CABLE Input
-    m_micSink = new QAudioSink(cableIn, fmt, this);
-    m_micSink->setBufferSize(fmt.bytesForDuration(200000)); // 200 ms
-    m_micOutput = m_micSink->start();
-    if (!m_micOutput || m_micSink->state() == QAudio::StoppedState) {
-        statusBar()->showMessage("Ошибка: не удалось открыть CABLE Input", 4000);
-        delete m_micSink; m_micSink = nullptr; m_micOutput = nullptr;
-        if (m_micBtn) m_micBtn->setChecked(false);
-        return;
-    }
-
-    // Input source → real microphone
-    m_micSource = new QAudioSource(QMediaDevices::defaultAudioInput(), fmt, this);
-    m_micSource->setBufferSize(fmt.bytesForDuration(50000)); // 50 ms
-    m_micCapture = m_micSource->start();
-    if (!m_micCapture || m_micSource->state() == QAudio::StoppedState) {
-        statusBar()->showMessage("Ошибка: не удалось открыть микрофон", 4000);
-        delete m_micSource; m_micSource = nullptr; m_micCapture = nullptr;
-        m_micSink->stop(); delete m_micSink; m_micSink = nullptr; m_micOutput = nullptr;
-        if (m_micBtn) m_micBtn->setChecked(false);
-        return;
-    }
-
-    // Timer drives mixing every 10 ms
-    m_micTimer = new QTimer(this);
-    m_micTimer->setInterval(10);
-    connect(m_micTimer, &QTimer::timeout, this, &MainWindow::micTimerTick);
-    m_micTimer->start();
-
-    m_micDevice  = cableIn;
-    m_micRouting = true;
-    if (m_micBtn) m_micBtn->setChecked(true);
-    statusBar()->showMessage("Вывод в микрофон: " + cableIn.description(), 3000);
-}
-
 // ─── Settings dialog ──────────────────────────────────────────────────────────
 
 void MainWindow::openSettings() {
@@ -2767,7 +3167,7 @@ void MainWindow::updateDuplicateHighlights()
     for (int i = 0; i < n; ++i) {
         QListWidgetItem *it = m_playlistWidget->item(i);
         const QString path = it->data(Qt::UserRole).value<QUrl>().toLocalFile().toLower();
-        pathCount[path]++;
+        if (!path.isEmpty()) pathCount[path]++;  // пустой путь — ссылка на музыку, не файл
     }
 
     QHash<QString, int> metaCount;
@@ -2786,10 +3186,218 @@ void MainWindow::updateDuplicateHighlights()
         const QString artist  = it->data(Qt::UserRole + 3).toString().toLower().trimmed();
         const QString metaKey = artist + "||" + title;
 
-        const bool isDup = pathCount.value(path) > 1
+        const bool isDup = (!path.isEmpty() && pathCount.value(path) > 1)
                         || (!title.isEmpty() && metaCount.value(metaKey) > 1);
 
         it->setData(Qt::UserRole + 10, isDup);
     }
     m_playlistWidget->viewport()->update();
+}
+
+// ─── APO mic routing (music → microphone via EchoBox APO) ────────────────────
+
+void MainWindow::toggleMicRouting()
+{
+    if (m_micRouting) {
+        m_micRouting = false;
+        if (m_apoOpenTimer) { m_apoOpenTimer->stop(); }
+        apoCloseRing();
+        if (m_micBtn) m_micBtn->setChecked(false);
+        statusBar()->showMessage("Музыка в микрофон: выкл", 2500);
+        return;
+    }
+
+    m_micRouting = true;
+    if (m_micBtn) m_micBtn->setChecked(true);
+
+    // The ring is created inside audiodg by the APO — it only exists while some
+    // app has the mic open. Poll until it appears.
+    if (!m_apoOpenTimer) {
+        m_apoOpenTimer = new QTimer(this);
+        m_apoOpenTimer->setInterval(500);
+        connect(m_apoOpenTimer, &QTimer::timeout, this, &MainWindow::apoTryOpenRing);
+    }
+    apoTryOpenRing();          // try immediately
+    if (!m_apoRing) {
+        m_apoOpenTimer->start();
+        statusBar()->showMessage(
+            "Музыка в микрофон: ожидаю микрофон... "
+            "(открой голосовой чат; если не установлено — запусти apo\\install.bat)", 8000);
+    }
+}
+
+void MainWindow::showMicMenu()
+{
+    QMenu menu(this);
+
+    auto *hdr = menu.addAction(m_micRouting ? "Музыка в микрофон: ВКЛ" : "Музыка в микрофон: выкл");
+    hdr->setEnabled(false);
+    menu.addSeparator();
+
+    auto *blockAct = menu.addAction("Только музыка (заглушить микрофон)");
+    blockAct->setCheckable(true);
+    blockAct->setChecked(m_apoBlockVoice);
+    connect(blockAct, &QAction::toggled, this, [this](bool on){
+        m_apoBlockVoice = on;
+        apoPushControls();
+        statusBar()->showMessage(on ? "Только музыка — микрофон заглушён"
+                                    : "Микрофон + музыка", 2500);
+    });
+
+    auto *gateAct = menu.addAction("Шумоподавление голоса");
+    gateAct->setCheckable(true);
+    gateAct->setChecked(m_apoNoiseGate);
+    gateAct->setToolTip("Убирает посторонний шум (клики, фон), оставляя голос");
+    connect(gateAct, &QAction::toggled, this, [this](bool on){
+        m_apoNoiseGate = on;
+        apoPushControls();
+        statusBar()->showMessage(on ? "Шумоподавление: вкл" : "Шумоподавление: выкл", 2500);
+    });
+
+    // Сила шумоподавления (порог гейта)
+    auto *gateMenu = menu.addMenu("Сила шумоподавления");
+    struct { const char *label; float thr; } gates[] = {
+        {"Слабое (тихий фон)",   0.008f},
+        {"Среднее",              0.02f},
+        {"Сильное (шумно вокруг)",0.05f},
+    };
+    auto *ggrp = new QActionGroup(gateMenu);
+    ggrp->setExclusive(true);
+    for (auto &g : gates) {
+        auto *a = gateMenu->addAction(g.label);
+        a->setCheckable(true);
+        a->setActionGroup(ggrp);
+        if (qFuzzyCompare(m_apoGateThresh, g.thr)) a->setChecked(true);
+        const float thr = g.thr;
+        connect(a, &QAction::triggered, this, [this, thr]{
+            m_apoGateThresh = thr;
+            apoPushControls();
+            statusBar()->showMessage("Порог шумоподавления обновлён", 2000);
+        });
+    }
+
+    menu.addSeparator();
+    auto *volHdr = menu.addAction("Громкость музыки:");
+    volHdr->setEnabled(false);
+
+    struct { const char *label; float gain; } levels[] = {
+        {"50%", 0.5f}, {"100%", 1.0f}, {"150%", 1.5f},
+        {"200%", 2.0f}, {"300%", 3.0f},
+    };
+    auto *grp = new QActionGroup(&menu);
+    grp->setExclusive(true);
+    for (auto &lv : levels) {
+        auto *a = menu.addAction(lv.label);
+        a->setCheckable(true);
+        a->setActionGroup(grp);
+        if (qFuzzyCompare(m_apoMusicGain, lv.gain)) a->setChecked(true);
+        const float g = lv.gain;
+        connect(a, &QAction::triggered, this, [this, g]{
+            m_apoMusicGain = g;
+            apoPushControls();
+            statusBar()->showMessage(
+                QString("Громкость музыки: %1%").arg(int(g * 100)), 2500);
+        });
+    }
+
+    menu.exec(QCursor::pos());
+}
+
+void MainWindow::apoTryOpenRing()
+{
+    if (!m_micRouting) { if (m_apoOpenTimer) m_apoOpenTimer->stop(); return; }
+    if (m_apoRing) { if (m_apoOpenTimer) m_apoOpenTimer->stop(); return; }
+
+    HANDLE h = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, kEchoBoxRingName);
+    if (!h) return; // APO ещё не активен — ждём
+
+    auto *ring = static_cast<EchoBoxRing *>(
+        MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, 0));
+    if (!ring) { CloseHandle(h); return; }
+
+    if (ring->magic != kEchoBoxRingMagic) { UnmapViewOfFile(ring); CloseHandle(h); return; }
+
+    // We are the producer — declare our sample rate.
+    ring->sampleRate = 48000;
+    m_apoWritePos    = ring->writePos;
+
+    m_apoMapping = h;
+    m_apoRing    = ring;
+    apoPushControls();               // передаём текущие громкость/режим
+    if (m_apoOpenTimer) m_apoOpenTimer->stop();
+    statusBar()->showMessage("Музыка в микрофон: включено ✓  играй трек", 4000);
+}
+
+void MainWindow::apoPushControls()
+{
+    auto *ring = static_cast<EchoBoxRing *>(m_apoRing);
+    if (!ring) return;
+    ring->musicGain  = m_apoMusicGain;
+    ring->blockVoice = m_apoBlockVoice ? 1u : 0u;
+    ring->noiseGate  = m_apoNoiseGate ? 1u : 0u;
+    ring->gateThresh = m_apoGateThresh;
+}
+
+void MainWindow::apoCloseRing()
+{
+    if (m_apoRing)    { UnmapViewOfFile(m_apoRing);          m_apoRing    = nullptr; }
+    if (m_apoMapping) { CloseHandle((HANDLE)m_apoMapping);   m_apoMapping = nullptr; }
+}
+
+void MainWindow::apoFeed(const QAudioBuffer &buffer)
+{
+    auto *ring = static_cast<EchoBoxRing *>(m_apoRing);
+    if (!ring) return;
+
+    const QAudioFormat &f = buffer.format();
+    const int inCh     = f.channelCount();
+    const int inFrames = buffer.frameCount();
+    const int inRate   = f.sampleRate();
+    if (inFrames <= 0 || inCh <= 0) return;
+
+    // Read source sample → normalized float, any format
+    auto rd = [&](int frame, int ch) -> float {
+        const int i = frame * inCh + ch;
+        switch (f.sampleFormat()) {
+        case QAudioFormat::Float: return buffer.constData<float>()[i];
+        case QAudioFormat::Int16: return buffer.constData<int16_t>()[i] / 32768.0f;
+        case QAudioFormat::Int32: return buffer.constData<int32_t>()[i] / 2147483648.0f;
+        default: return 0.0f;
+        }
+    };
+
+    const uint32_t cap     = ring->capacityFrames;
+    const uint32_t outRate = ring->sampleRate ? ring->sampleRate : 48000;
+    uint32_t       wp      = m_apoWritePos % cap;
+
+    auto pushFrame = [&](float L, float R) {
+        ring->data[wp * 2]     = L;
+        ring->data[wp * 2 + 1] = R;
+        wp = (wp + 1) % cap;
+    };
+
+    if (inRate == (int)outRate) {
+        for (int fr = 0; fr < inFrames; ++fr) {
+            const float L = rd(fr, 0);
+            const float R = inCh >= 2 ? rd(fr, 1) : L;
+            pushFrame(L, R);
+        }
+    } else {
+        // Linear resample inRate → outRate
+        const double ratio    = double(inRate) / double(outRate);
+        const int    outCount = int(double(inFrames) / ratio);
+        for (int o = 0; o < outCount; ++o) {
+            const double pos = o * ratio;
+            const int    i0  = int(pos);
+            const int    i1  = std::min(i0 + 1, inFrames - 1);
+            const float  t   = float(pos - i0);
+            const float  L   = rd(i0, 0) * (1 - t) + rd(i1, 0) * t;
+            const float  R   = inCh >= 2 ? rd(i0, 1) * (1 - t) + rd(i1, 1) * t : L;
+            pushFrame(L, R);
+        }
+    }
+
+    m_apoWritePos   = wp;
+    ring->writePos  = wp;          // publish
+    ring->playerAlive = 1;
 }
