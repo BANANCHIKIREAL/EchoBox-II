@@ -82,9 +82,12 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "1.4.0-beta.2";
+static const QString kAppVersion = "1.4.1";
+// Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
+// pre-release-версии (наши beta.*), поэтому берём общий список и находим
+// самую новую версию сами (ниже, в checkForUpdates)
 static const QString kUpdateApiUrl =
-    "https://api.github.com/repos/BANANCHIKIREAL/EchoBox-II/releases/latest";
+    "https://api.github.com/repos/BANANCHIKIREAL/EchoBox-II/releases";
 
 const QStringList MainWindow::VIDEO_EXTS = {"mp4","mkv","avi","mov","webm","flv","wmv","m2ts"};
 const QStringList MainWindow::MEDIA_FILTER = {
@@ -2583,10 +2586,20 @@ void MainWindow::checkForUpdates(bool manual) {
             return;
         }
 
-        const QJsonObject obj = QJsonDocument::fromJson(reply->readAll()).object();
-        const QString tag   = obj.value("tag_name").toString();
-        const QString url   = obj.value("html_url").toString();
-        const QString notes = obj.value("body").toString();
+        // Общий список содержит и pre-release-теги — ищем среди них
+        // самый новый по номеру версии, а не просто первый в ответе
+        const QJsonArray releases = QJsonDocument::fromJson(reply->readAll()).array();
+        QJsonObject newest;
+        QString tag;
+        for (const QJsonValue &v : releases) {
+            const QJsonObject obj = v.toObject();
+            if (obj.value("draft").toBool()) continue;
+            const QString t = obj.value("tag_name").toString();
+            if (t.isEmpty()) continue;
+            if (tag.isEmpty() || isNewerVersion(t, tag)) { tag = t; newest = obj; }
+        }
+        const QString url   = newest.value("html_url").toString();
+        const QString notes = newest.value("body").toString();
         if (tag.isEmpty()) {
             if (manual) statusBar()->showMessage("Не удалось проверить обновления", 5000);
             return;
