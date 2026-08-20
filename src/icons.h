@@ -5,6 +5,7 @@
 #include <QPen>
 #include <QPolygonF>
 #include <QPainterPath>
+#include <QLineF>
 #include <QGuiApplication>
 
 namespace Ico {
@@ -18,13 +19,38 @@ inline QPixmap makePixmap(int sz) {
     return pm;
 }
 
+// Полигон со скруглёнными углами (каждый угол — квадратичная кривая к
+// точке, отступленной от вершины на radius по обеим сторонам) — тот же
+// приём, что и скруглённые прямоугольники у pause(), но для треугольника
+inline QPainterPath roundedPolygon(const QVector<QPointF> &pts, qreal radius) {
+    QPainterPath path;
+    const int n = pts.size();
+    for (int i = 0; i < n; ++i) {
+        const QPointF prev = pts[(i - 1 + n) % n];
+        const QPointF cur  = pts[i];
+        const QPointF next = pts[(i + 1) % n];
+        const qreal lenPrev = QLineF(cur, prev).length();
+        const qreal lenNext = QLineF(cur, next).length();
+        const qreal rp = qMin(radius, lenPrev * 0.5);
+        const qreal rn = qMin(radius, lenNext * 0.5);
+        const QPointF p1 = cur + (prev - cur) * (rp / lenPrev);
+        const QPointF p2 = cur + (next - cur) * (rn / lenNext);
+        if (i == 0) path.moveTo(p1);
+        else        path.lineTo(p1);
+        path.quadTo(cur, p2);
+    }
+    path.closeSubpath();
+    return path;
+}
+
 inline QIcon play(QColor c, int sz = 24) {
     QPixmap pm = makePixmap(sz);
     QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen); p.setBrush(c);
-    QPolygonF t;
-    t << QPointF(sz*0.22, sz*0.12) << QPointF(sz*0.87, sz*0.50) << QPointF(sz*0.22, sz*0.88);
-    p.drawPolygon(t);
+    const QVector<QPointF> t = {
+        QPointF(sz*0.20, sz*0.10), QPointF(sz*0.88, sz*0.50), QPointF(sz*0.20, sz*0.90)
+    };
+    p.drawPath(roundedPolygon(t, sz*0.09));
     return QIcon(pm);
 }
 
