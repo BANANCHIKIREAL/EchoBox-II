@@ -44,6 +44,20 @@ static QWidget *makeFolderRow(QLineEdit *&edit, const QString &val,
     return w;
 }
 
+// Короткая вспышка непрозрачности — визуальное подтверждение клика/выбора
+static void flashWidget(QWidget *w, int durationMs = 260) {
+    if (!w) return;
+    auto *effect = new QGraphicsOpacityEffect(w);
+    w->setGraphicsEffect(effect);
+    auto *anim = new QPropertyAnimation(effect, "opacity", w);
+    anim->setDuration(durationMs);
+    anim->setStartValue(0.25);
+    anim->setEndValue(1.0);
+    anim->setEasingCurve(QEasingCurve::OutCubic);
+    QObject::connect(anim, &QPropertyAnimation::finished, w, [w]{ w->setGraphicsEffect(nullptr); });
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
 // Section heading with optional ? help button
 static QWidget *makeHead(const QString &title, const QString &help = "") {
     auto *w = new QWidget;
@@ -61,6 +75,7 @@ static QWidget *makeHead(const QString &title, const QString &help = "") {
         btn->setCursor(Qt::WhatsThisCursor);
         const QString h = help;
         QObject::connect(btn, &QToolButton::clicked, [btn, h]{
+            flashWidget(btn);
             QToolTip::showText(btn->mapToGlobal(QPoint(0, btn->height() + 2)), h, btn, {}, 8000);
         });
         l->addWidget(btn);
@@ -228,7 +243,7 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
         btn->setToolTip(p.n);
         const QColor col = p.c;
         connect(btn, &QPushButton::clicked, this,
-                [this, col]{ setAccentPreset(col); liveApply(); });
+                [this, col, btn]{ setAccentPreset(col); liveApply(); flashWidget(btn); });
         presetRow->addWidget(btn);
         m_presetBtns << btn;
         m_presetColors << col;
@@ -566,6 +581,7 @@ void SettingsDialog::setAccentPreset(const QColor &c) {
     m_result.accentColor = c;
     m_accentSwatch->setStyleSheet(
         QString("background:%1;border-radius:17px;border:2px solid #313244;").arg(c.name()));
+    flashWidget(m_accentSwatch);
     refreshPresetSwatches();
 }
 

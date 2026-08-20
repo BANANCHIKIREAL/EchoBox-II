@@ -199,6 +199,11 @@ private:
     void updatePlaylistInfo();
     void updateTimeDisplay(qint64 pos, qint64 dur);
     void setCurrentTrackVisual(int index);
+
+    // Плавные переходы — общие хелперы, переиспользуются по всему UI
+    void fadeInWidget(QWidget *w, int durationMs = 260);
+    void popButtonIcon(QToolButton *btn);
+    void animateTrackHighlight(const QUrl &url);
     void addRecentFile(const QString &path);
     void refreshRecentMenu();
     bool isVideoFile(const QUrl &url) const;
