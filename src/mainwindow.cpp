@@ -87,7 +87,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "1.5.7";
+static const QString kAppVersion = "1.5.8";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -1099,6 +1099,32 @@ void MainWindow::applyTheme() {
         QListWidget#playlist::item:hover:!selected { background-color: #2a2b3d; }
         QListWidget#playlist::item:selected { background-color: #45475a; color: ACCENT; }
 
+        /* Без явного фона тут любой QLineEdit/QComboBox без своего ID
+           (диалоги ввода ссылки, поля путей в настройках и т.п.) остаётся
+           с нативным фоном ОС — в светлой теме Windows это белый фон,
+           а унаследованный светлый цвет текста делает его нечитаемым */
+        QLineEdit {
+            background-color: #181825;
+            border: 1px solid #313244;
+            border-radius: 6px;
+            padding: 5px 8px;
+            color: #cdd6f4;
+            selection-background-color: #45475a;
+        }
+        QLineEdit:focus { border-color: ACCENT; }
+        QLineEdit:disabled { color: #6c7086; background-color: #1a1a27; }
+
+        QComboBox {
+            background-color: #181825;
+            border: 1px solid #313244;
+            border-radius: 6px;
+            padding: 4px 8px;
+            color: #cdd6f4;
+        }
+        QComboBox:hover { border-color: #45475a; }
+        QComboBox:focus { border-color: ACCENT; }
+        QComboBox::drop-down { border: none; width: 22px; }
+
         QLineEdit#searchEdit {
             background-color: #181825;
             border: 1px solid #313244;
@@ -1630,6 +1656,57 @@ void MainWindow::removeSelectedTracks() {
     updateDuplicateHighlights();
 }
 
+void MainWindow::copySelectedTracksToPlaylist(int targetIndex) {
+    if (targetIndex < 0 || targetIndex >= m_playlists.size() || targetIndex == m_activePl) return;
+    const QList<QListWidgetItem*> sel = m_playlistWidget->selectedItems();
+    if (sel.isEmpty()) return;
+
+    PlaylistEntry &target = m_playlists[targetIndex];
+    int added = 0;
+    for (QListWidgetItem *item : sel) {
+        const QUrl url = item->data(Qt::UserRole).value<QUrl>();
+        if (target.tracks.contains(url)) continue;   // не плодим дубликаты
+        target.tracks.append(url);
+        ++added;
+    }
+    savePlaylistsToFile();
+    statusBar()->showMessage(added > 0
+        ? QString("Скопировано треков: %1 → «%2»").arg(added).arg(target.name)
+        : "Эти треки уже есть в выбранном плейлисте", 4000);
+}
+
+void MainWindow::moveSelectedTracksToPlaylist(int targetIndex) {
+    if (targetIndex < 0 || targetIndex >= m_playlists.size() || targetIndex == m_activePl) return;
+    const QList<QListWidgetItem*> sel = m_playlistWidget->selectedItems();
+    if (sel.isEmpty()) return;
+
+    PlaylistEntry &target = m_playlists[targetIndex];
+    int moved = 0;
+    for (QListWidgetItem *item : sel) {
+        const QUrl url = item->data(Qt::UserRole).value<QUrl>();
+        if (!target.tracks.contains(url)) { target.tracks.append(url); ++moved; }
+    }
+
+    // Убираем из текущего плейлиста — та же механика, что и в
+    // removeSelectedTracks(), но без диалога: перенос — не потеря треков
+    for (QListWidgetItem *item : sel) {
+        const QUrl url = item->data(Qt::UserRole).value<QUrl>();
+        m_playlist.removeAll(url);
+        delete item;
+    }
+    for (int i = 0; i < m_playlistWidget->count(); ++i) {
+        QListWidgetItem *it = m_playlistWidget->item(i);
+        const QUrl u = it->data(Qt::UserRole).value<QUrl>();
+        it->setText(QString("  %1.  %2").arg(i + 1).arg(playlistRowLabel(u)));
+    }
+    if (m_currentIndex >= m_playlist.size()) m_currentIndex = m_playlist.size() - 1;
+    updatePlaylistInfo();
+    updateDuplicateHighlights();
+    savePlaylistsToFile();
+    statusBar()->showMessage(
+        QString("Перемещено треков: %1 → «%2»").arg(moved).arg(target.name), 4000);
+}
+
 void MainWindow::moveTrackUp() {
     int row = m_playlistWidget->currentRow();
     if (row <= 0) return;
@@ -1706,6 +1783,16 @@ void MainWindow::onPlaylistContextMenu(const QPoint &pos) {
     if (item) {
         menu.addAction("▶  Воспроизвести", [this, item]{ onTrackActivated(item); });
         menu.addAction("✕  Удалить из плейлиста", this, &MainWindow::removeSelectedTracks);
+        if (m_playlists.size() > 1) {
+            QMenu *moveMenu = menu.addMenu("→  Переместить в плейлист");
+            QMenu *copyMenu = menu.addMenu("⧉  Копировать в плейлист");
+            for (int i = 0; i < m_playlists.size(); ++i) {
+                if (i == m_activePl) continue;
+                const QString name = m_playlists[i].name;
+                moveMenu->addAction(name, [this, i]{ moveSelectedTracksToPlaylist(i); });
+                copyMenu->addAction(name, [this, i]{ copySelectedTracksToPlaylist(i); });
+            }
+        }
         menu.addSeparator();
         QUrl itemUrl = item->data(Qt::UserRole).value<QUrl>();
         menu.addAction("Установить иконку...", [this, item, itemUrl]{

@@ -98,6 +98,8 @@ private slots:
     // Playlist
     void clearPlaylist();
     void removeSelectedTracks();
+    void moveSelectedTracksToPlaylist(int targetIndex);
+    void copySelectedTracksToPlaylist(int targetIndex);
     void moveTrackUp();
     void moveTrackDown();
     void onSearchChanged(const QString &text);
