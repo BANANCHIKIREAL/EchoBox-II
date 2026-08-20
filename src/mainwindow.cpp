@@ -84,7 +84,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "1.5.3";
+static const QString kAppVersion = "1.5.4";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -2336,7 +2336,7 @@ void MainWindow::toggleMiniDock() {
     }
 
     auto *anim = new QPropertyAnimation(this, "geometry", this);
-    anim->setDuration(220);
+    anim->setDuration(380);
     anim->setStartValue(geometry());
     anim->setEndValue(target);
     anim->setEasingCurve(QEasingCurve::OutCubic);
@@ -2812,6 +2812,19 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
             << "    $sub = Get-ChildItem -Path $src -Directory | Select-Object -First 1\n"
             << "    if ($sub) { $src = $sub.FullName }\n"
             << "}\n"
+            // Папка установки может требовать прав администратора для записи
+            // (например Program Files) — тогда тихо перезапускаемся с UAC-
+            // запросом; если пользователь установил в свою папку (как сейчас),
+            // права не понадобятся и никакого запроса не будет вовсе
+            << "$testFile = Join-Path '" << exeDir << "' '.echobox_write_test'\n"
+            << "try {\n"
+            << "    [IO.File]::WriteAllText($testFile, 'x')\n"
+            << "    Remove-Item $testFile -Force -ErrorAction SilentlyContinue\n"
+            << "} catch {\n"
+            << "    Start-Process -FilePath 'powershell' -Verb RunAs -WindowStyle Hidden -ArgumentList "
+               "@('-NoProfile','-ExecutionPolicy','Bypass','-File', $PSCommandPath)\n"
+            << "    exit\n"
+            << "}\n"
             << "$backup = Join-Path $env:TEMP ('EchoBoxII_backup_' + (Get-Date -Format 'yyyyMMddHHmmss'))\n"
             << "Copy-Item -Path '" << exeDir << "' -Destination $backup -Recurse -Force -ErrorAction SilentlyContinue\n"
             << "robocopy $src '" << exeDir << "' /E /IS /IT /NFL /NDL /NJH /NJS | Out-Null\n"
@@ -2825,6 +2838,9 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
         QMessageBox::information(this, "Обновление",
             "Обновление " + tag + " скачано. Приложение сейчас закроется и обновится "
             "автоматически, затем перезапустится само.");
+        // qApp->quit() не проходит через closeEvent(), поэтому плейлисты и
+        // библиотека сами себя не сохранят — делаем это явно перед выходом
+        saveSettings();
         qApp->quit();
     });
 }

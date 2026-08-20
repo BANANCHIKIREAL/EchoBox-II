@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white"/>
   <img src="https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white"/>
   <img src="https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-red?style=for-the-badge"/>
-  <img src="https://img.shields.io/badge/version-1.5.3-blue?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/version-1.5.4-blue?style=for-the-badge"/>
 </p>
 
 <p align="center">
@@ -185,6 +185,16 @@ EchoBox-II/
 ---
 
 ## История версий
+
+### 🛠 v1.5.4
+> 20 августа 2026
+
+**Исправления**
+- Критично: автообновление не сохраняло плейлисты и библиотеку перед выходом (закрытие в обход обычного `closeEvent`) — локальные треки могли откатиться к старому сохранённому состоянию. Теперь сохранение происходит явно перед перезапуском
+- Апдейтер сам запрашивает права администратора через UAC, если папка установки требует их для записи (например Program Files) — раньше просто падал молча
+- Увеличена длительность анимаций (появление настроек, переключение разделов, докинг мини-плеера) — раньше были почти незаметны
+
+---
 
 ### ✨ v1.5.3
 > 20 августа 2026
