@@ -82,7 +82,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "1.5.1";
+static const QString kAppVersion = "1.5.2";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -1117,13 +1117,49 @@ void MainWindow::applyTheme() {
 
         /* ── Settings dialog ── */
         QDialog        { background-color: #1e1e2e; color: #cdd6f4; }
-        QTabWidget::pane { border: 1px solid #313244; border-radius: 6px; }
-        QTabBar#settingsTabs::tab { background-color: #252537; color: #6c7086; padding: 7px 18px; border-radius: 4px 4px 0 0; }
-        QTabBar#settingsTabs::tab:selected { background-color: #313244; color: ACCENT; }
-        QTabBar#settingsTabs::tab:hover:!selected { background-color: #2d2d42; color: #cdd6f4; }
+
+        QWidget#settingsHeader {
+            background-color: #181825;
+            border-bottom: 1px solid #313244;
+        }
+        QLabel#settingsTitle    { color: #cdd6f4; font-size: 17px; font-weight: bold; }
+        QLabel#settingsSubtitle { color: #6c7086; font-size: 12px; }
+
+        QWidget#settingsSidebarWrap { background-color: #181825; border-right: 1px solid #313244; }
+        QListWidget#settingsSidebar {
+            background: transparent;
+            border: none;
+            outline: none;
+            padding: 0px;
+        }
+        QListWidget#settingsSidebar::item {
+            color: #a6adc8;
+            border-radius: 7px;
+            padding-left: 10px;
+            margin: 1px 0px;
+        }
+        QListWidget#settingsSidebar::item:hover:!selected {
+            background-color: #24243a;
+            color: #cdd6f4;
+        }
+        QListWidget#settingsSidebar::item:selected {
+            background-color: #313244;
+            color: ACCENT;
+            font-weight: bold;
+        }
+
+        QStackedWidget#settingsStack { background-color: #1e1e2e; }
+
+        QWidget#settingsFooter { border-top: 1px solid #313244; }
+        QPushButton#settingsOkBtn {
+            background-color: ACCENT; color: #1e1e2e; border: none; font-weight: bold;
+        }
+        QPushButton#settingsOkBtn:hover   { background-color: #d4b8f9; }
+        QPushButton#settingsOkBtn:pressed { background-color: #b389f4; }
+
         QGroupBox { border: 1px solid #313244; border-radius: 6px; margin-top: 6px; padding-top: 6px; color: #a6adc8; }
-        QLabel#settingsHead { color: #cdd6f4; font-weight: bold; }
-        QFrame#settingsSep  { background: #313244; max-height: 1px; }
+        QLabel#settingsHead { color: #cdd6f4; font-weight: bold; font-size: 13px; }
+        QFrame#settingsSep  { background: #292941; max-height: 1px; }
 
         QRadioButton, QCheckBox { color: #cdd6f4; spacing: 8px; }
         QRadioButton::indicator {
@@ -1808,6 +1844,17 @@ void MainWindow::openStreamUrl(const QString &link) {
     }
     if (m_playlist.contains(url)) {
         statusBar()->showMessage("Этот трек уже в плейлисте", 3000);
+        return;
+    }
+
+    // Яндекс.Музыка блокирует такие запросы как автоматические (бот-защита) —
+    // без реальной авторизации в браузере это не открывается в принципе,
+    // так что честнее сразу сказать об этом, чем гонять через долгую попытку
+    if (url.host().contains("music.yandex.", Qt::CaseInsensitive)) {
+        QMessageBox::warning(this, "Не поддерживается",
+            "Яндекс.Музыка не поддерживается: сервис блокирует такие запросы "
+            "как автоматические и требует авторизацию в браузере, которую "
+            "обойти не получается.");
         return;
     }
 

@@ -233,4 +233,71 @@ inline QIcon trash(QColor c, int sz = 24) {
     return QIcon(pm);
 }
 
+inline QIcon sliders(QColor c, int sz = 24) {
+    QPixmap pm = makePixmap(sz);
+    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
+    QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    p.setPen(pen);
+    const float ys[] = {0.28f, 0.5f, 0.72f};
+    const float kx[] = {0.62f, 0.36f, 0.58f};
+    for (int i = 0; i < 3; ++i) {
+        const float y = sz * ys[i];
+        p.drawLine(QPointF(sz*0.16f, y), QPointF(sz*0.84f, y));
+        p.setBrush(c);
+        p.drawEllipse(QPointF(sz * kx[i], y), sz*0.075f, sz*0.075f);
+    }
+    return QIcon(pm);
+}
+
+inline QIcon folder(QColor c, int sz = 24) {
+    QPixmap pm = makePixmap(sz);
+    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
+    QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+    QPainterPath path;
+    path.moveTo(sz*0.14f, sz*0.30f);
+    path.lineTo(sz*0.14f, sz*0.78f);
+    path.lineTo(sz*0.86f, sz*0.78f);
+    path.lineTo(sz*0.86f, sz*0.38f);
+    path.lineTo(sz*0.46f, sz*0.38f);
+    path.lineTo(sz*0.38f, sz*0.24f);
+    path.lineTo(sz*0.14f, sz*0.24f);
+    path.closeSubpath();
+    p.drawPath(path);
+    return QIcon(pm);
+}
+
+inline QIcon windowIcon(QColor c, int sz = 24) {
+    QPixmap pm = makePixmap(sz);
+    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
+    QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(QRectF(sz*0.14f, sz*0.20f, sz*0.72f, sz*0.60f), sz*0.06f, sz*0.06f);
+    p.drawLine(QPointF(sz*0.14f, sz*0.36f), QPointF(sz*0.86f, sz*0.36f));
+    p.setBrush(c);
+    p.setPen(Qt::NoPen);
+    p.drawEllipse(QPointF(sz*0.24f, sz*0.28f), sz*0.028f, sz*0.028f);
+    p.drawEllipse(QPointF(sz*0.33f, sz*0.28f), sz*0.028f, sz*0.028f);
+    return QIcon(pm);
+}
+
+inline QIcon link(QColor c, int sz = 24) {
+    QPixmap pm = makePixmap(sz);
+    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
+    QPen pen(c, sz * 0.10f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+    p.save();
+    p.translate(sz*0.36f, sz*0.64f); p.rotate(-45);
+    p.drawRoundedRect(QRectF(-sz*0.20f, -sz*0.13f, sz*0.40f, sz*0.26f), sz*0.13f, sz*0.13f);
+    p.restore();
+    p.save();
+    p.translate(sz*0.64f, sz*0.36f); p.rotate(-45);
+    p.drawRoundedRect(QRectF(-sz*0.20f, -sz*0.13f, sz*0.40f, sz*0.26f), sz*0.13f, sz*0.13f);
+    p.restore();
+    return QIcon(pm);
+}
+
 } // namespace Ico

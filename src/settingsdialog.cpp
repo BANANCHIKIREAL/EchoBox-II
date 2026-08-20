@@ -1,5 +1,7 @@
 #include "settingsdialog.h"
-#include <QTabWidget>
+#include "icons.h"
+#include <QListWidget>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
@@ -77,15 +79,42 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
     : QDialog(parent), m_result(s)
 {
     setWindowTitle("Настройки");
-    setMinimumSize(540, 500);
+    setMinimumSize(620, 500);
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(0, 0, 0, 12);
+    root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    auto *tabs = new QTabWidget(this);
-    tabs->setObjectName("settingsTabs");
+    // ── Header ───────────────────────────────────────────────────────────────
+    auto *header = new QWidget(this);
+    header->setObjectName("settingsHeader");
+    auto *headerL = new QVBoxLayout(header);
+    headerL->setContentsMargins(24, 16, 24, 14);
+    headerL->setSpacing(2);
+    auto *titleLbl = new QLabel("Настройки");
+    titleLbl->setObjectName("settingsTitle");
+    auto *subLbl = new QLabel("Внешний вид, поведение плеера и интеграции");
+    subLbl->setObjectName("settingsSubtitle");
+    headerL->addWidget(titleLbl);
+    headerL->addWidget(subLbl);
+    root->addWidget(header);
+
+    // ── Body: sidebar + pages ───────────────────────────────────────────────
+    auto *body = new QHBoxLayout;
+    body->setContentsMargins(0, 0, 0, 0);
+    body->setSpacing(0);
+
+    auto *sidebar = new QListWidget(this);
+    sidebar->setObjectName("settingsSidebar");
+    sidebar->setFixedWidth(180);
+    sidebar->setFocusPolicy(Qt::NoFocus);
+    sidebar->setFrameShape(QFrame::NoFrame);
+    sidebar->setIconSize({18, 18});
+    sidebar->setUniformItemSizes(true);
+
+    auto *stack = new QStackedWidget(this);
+    stack->setObjectName("settingsStack");
 
     auto *tApp  = new QWidget; buildAppearanceTab(tApp);
     auto *tPlay = new QWidget; buildPlayerTab(tPlay);
@@ -93,20 +122,52 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
     auto *tUi   = new QWidget; buildInterfaceTab(tUi);
     auto *tIntg = new QWidget; buildIntegrationsTab(tIntg);
 
-    tabs->addTab(tApp,  "Внешний вид");
-    tabs->addTab(tPlay, "Плеер");
-    tabs->addTab(tFile, "Файлы");
-    tabs->addTab(tUi,   "Интерфейс");
-    tabs->addTab(tIntg, "Интеграции");
+    const QColor iconColor(0xa6, 0xad, 0xc8);
+    const struct { QIcon icon; QString title; QWidget *page; } sections[] = {
+        { Ico::sliders(iconColor, 17),    "Внешний вид", tApp  },
+        { Ico::play(iconColor, 15),       "Плеер",       tPlay },
+        { Ico::folder(iconColor, 17),     "Файлы",       tFile },
+        { Ico::windowIcon(iconColor, 17), "Интерфейс",   tUi   },
+        { Ico::link(iconColor, 17),       "Интеграции",  tIntg },
+    };
+    for (const auto &sec : sections) {
+        auto *item = new QListWidgetItem(sec.icon, "  " + sec.title);
+        item->setSizeHint(QSize(0, 38));
+        sidebar->addItem(item);
+        stack->addWidget(sec.page);
+    }
+    sidebar->setCurrentRow(0);
+    connect(sidebar, &QListWidget::currentRowChanged, stack, &QStackedWidget::setCurrentIndex);
 
-    root->addWidget(tabs, 1);
+    auto *sidebarWrap = new QWidget(this);
+    sidebarWrap->setObjectName("settingsSidebarWrap");
+    auto *sidebarWrapL = new QVBoxLayout(sidebarWrap);
+    sidebarWrapL->setContentsMargins(8, 8, 8, 8);
+    sidebarWrapL->addWidget(sidebar);
+
+    body->addWidget(sidebarWrap);
+    body->addWidget(stack, 1);
+    root->addLayout(body, 1);
+
+    // ── Footer ───────────────────────────────────────────────────────────────
+    auto *footer = new QWidget(this);
+    footer->setObjectName("settingsFooter");
+    auto *footerL = new QHBoxLayout(footer);
+    footerL->setContentsMargins(24, 12, 24, 12);
 
     auto *btnBox = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    btnBox->setContentsMargins(12, 4, 12, 0);
+    if (auto *ok = btnBox->button(QDialogButtonBox::Ok)) {
+        ok->setText("Сохранить");
+        ok->setObjectName("settingsOkBtn");
+    }
+    if (auto *cancel = btnBox->button(QDialogButtonBox::Cancel))
+        cancel->setText("Отмена");
     connect(btnBox, &QDialogButtonBox::accepted, this, [this]{ collectResult(); accept(); });
     connect(btnBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    root->addWidget(btnBox);
+    footerL->addStretch();
+    footerL->addWidget(btnBox);
+    root->addWidget(footer);
 
     connectLive();
 }
@@ -128,10 +189,10 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
 
     auto *accentRow = new QHBoxLayout;
     m_accentSwatch = new QLabel;
-    m_accentSwatch->setFixedSize(30, 30);
+    m_accentSwatch->setFixedSize(34, 34);
     m_accentSwatch->setObjectName("accentSwatch");
     m_accentSwatch->setStyleSheet(
-        QString("background:%1;border-radius:6px;border:1px solid #555;")
+        QString("background:%1;border-radius:17px;border:2px solid #313244;")
         .arg(m_result.accentColor.name()));
     auto *pickBtn = new QPushButton("Выбрать...");
     pickBtn->setFixedHeight(30);
@@ -154,19 +215,23 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
         {"Green",  {0xa6,0xe3,0xa1}}, {"Peach", {0xfa,0xb3,0x87}},
         {"Red",    {0xf3,0x8b,0xa8}}, {"Pink",  {0xf5,0xc2,0xe7}},
     };
+    m_presetBtns.clear();
+    m_presetColors.clear();
     for (const auto &p : presets) {
         auto *btn = new QPushButton;
-        btn->setFixedSize(26, 26);
+        btn->setFixedSize(28, 28);
+        btn->setCursor(Qt::PointingHandCursor);
         btn->setToolTip(p.n);
-        btn->setStyleSheet(
-            QString("background:%1;border-radius:5px;border:1px solid #555;").arg(p.c.name()));
         const QColor col = p.c;
         connect(btn, &QPushButton::clicked, this,
                 [this, col]{ setAccentPreset(col); liveApply(); });
         presetRow->addWidget(btn);
+        m_presetBtns << btn;
+        m_presetColors << col;
     }
     presetRow->addStretch();
     l->addLayout(presetRow);
+    refreshPresetSwatches();
 
     l->addWidget(makeSep());
 
@@ -396,10 +461,10 @@ void SettingsDialog::buildIntegrationsTab(QWidget *tab) {
     m_liveWidgets << m_discordChk;
 
     l->addWidget(makeHead("Ссылки на музыку",
-        "Некоторые сайты (например Яндекс.Музыка) отдают музыку только\n"
-        "залогиненным — yt-dlp может использовать куки из твоего браузера,\n"
-        "если ты уже вошёл там в нужный сервис. Не гарантирует успех для\n"
-        "каждого сайта, но иногда единственный способ."));
+        "Некоторые сайты отдают музыку только залогиненным — yt-dlp\n"
+        "может использовать куки из твоего браузера, если ты уже вошёл\n"
+        "там в нужный сервис. Не гарантирует успех для каждого сайта,\n"
+        "но иногда единственный способ."));
 
     m_cookiesBrowserCombo = new QComboBox();
     m_cookiesBrowserCombo->addItem("Не использовать", "");
@@ -453,7 +518,18 @@ void SettingsDialog::pickAccentColor() {
 void SettingsDialog::setAccentPreset(const QColor &c) {
     m_result.accentColor = c;
     m_accentSwatch->setStyleSheet(
-        QString("background:%1;border-radius:6px;border:1px solid #555;").arg(c.name()));
+        QString("background:%1;border-radius:17px;border:2px solid #313244;").arg(c.name()));
+    refreshPresetSwatches();
+}
+
+void SettingsDialog::refreshPresetSwatches() {
+    for (int i = 0; i < m_presetBtns.size(); ++i) {
+        const bool active = (m_presetColors[i] == m_result.accentColor);
+        const QString border = active ? "3px solid #ffffff" : "1px solid #45475a";
+        m_presetBtns[i]->setStyleSheet(
+            QString("background:%1;border-radius:14px;border:%2;")
+            .arg(m_presetColors[i].name(), border));
+    }
 }
 
 void SettingsDialog::browseFolder(QLineEdit *edit) {
