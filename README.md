@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white"/>
   <img src="https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white"/>
   <img src="https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-red?style=for-the-badge"/>
-  <img src="https://img.shields.io/badge/version-1.5.0-blue?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/version-1.5.1-blue?style=for-the-badge"/>
 </p>
 
 <p align="center">
@@ -185,6 +185,18 @@ EchoBox-II/
 ---
 
 ## История версий
+
+### ✨ v1.5.1
+> 20 августа 2026
+
+**Новые функции**
+- Настройки → Интеграции → «Ссылки на музыку»: можно указать браузер (Chrome/Edge/Firefox/Brave/Opera/Vivaldi), чьи куки yt-dlp будет использовать для сайтов, требующих вход (например Яндекс.Музыка отдаёт трек только залогиненным — без куки запрос считается автоматическим и блокируется)
+- У exe наконец появилась собственная иконка (раньше её не было вообще — ни в проводнике, ни у ярлыков, только в самом окне)
+
+**Исправления**
+- Иконка окна/exe была размытой — ICO содержал только один размер (16×16) вместо полного набора, Windows растягивала его. Пересобран вручную из честно отрисованных PNG каждого размера (16–256px)
+
+---
 
 ### ✨ v1.5.0
 > 19 августа 2026
