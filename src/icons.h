@@ -4,6 +4,7 @@
 #include <QPainter>
 #include <QPen>
 #include <QPolygonF>
+#include <QPainterPath>
 #include <QGuiApplication>
 
 namespace Ico {
@@ -204,6 +205,31 @@ inline QIcon dockTop(QColor c, int sz = 24) {
     p.drawLine(QPointF(sz*0.5f,  sz*0.30f), QPointF(sz*0.76f, sz*0.62f));
     // Полоса — "во всю ширину"
     p.drawLine(QPointF(sz*0.16f, sz*0.84f), QPointF(sz*0.84f, sz*0.84f));
+    return QIcon(pm);
+}
+
+inline QIcon trash(QColor c, int sz = 24) {
+    QPixmap pm = makePixmap(sz);
+    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
+    QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+    // Крышка
+    p.drawLine(QPointF(sz*0.20f, sz*0.30f), QPointF(sz*0.80f, sz*0.30f));
+    p.drawLine(QPointF(sz*0.40f, sz*0.30f), QPointF(sz*0.44f, sz*0.18f));
+    p.drawLine(QPointF(sz*0.44f, sz*0.18f), QPointF(sz*0.56f, sz*0.18f));
+    p.drawLine(QPointF(sz*0.56f, sz*0.18f), QPointF(sz*0.60f, sz*0.30f));
+    // Корзина
+    QPainterPath body;
+    body.moveTo(sz*0.28f, sz*0.34f);
+    body.lineTo(sz*0.33f, sz*0.86f);
+    body.lineTo(sz*0.67f, sz*0.86f);
+    body.lineTo(sz*0.72f, sz*0.34f);
+    p.drawPath(body);
+    // Полоски
+    p.drawLine(QPointF(sz*0.41f, sz*0.44f), QPointF(sz*0.43f, sz*0.76f));
+    p.drawLine(QPointF(sz*0.5f,  sz*0.44f), QPointF(sz*0.5f,  sz*0.76f));
+    p.drawLine(QPointF(sz*0.59f, sz*0.44f), QPointF(sz*0.57f, sz*0.76f));
     return QIcon(pm);
 }
 
