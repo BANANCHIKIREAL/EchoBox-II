@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white"/>
   <img src="https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white"/>
   <img src="https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-red?style=for-the-badge"/>
-  <img src="https://img.shields.io/badge/version-1.5.6-blue?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/version-1.5.7-blue?style=for-the-badge"/>
 </p>
 
 <p align="center">
@@ -185,6 +185,15 @@ EchoBox-II/
 ---
 
 ## История версий
+
+### ✨ v1.5.7
+> 20 августа 2026
+
+**Новые функции**
+- Индикатор загрузки: вместо голого текста в строке состояния — компактная панель с анимированным прогресс-баром в акцентном цвете под названием трека (получение трека по ссылке, скачивание для проигрывания, скачивание и распаковка обновлений)
+- Много новых настроек: автозапуск с Windows, запуск свёрнутым в трей, отключение автопроверки обновлений при старте, отключение диалогов подтверждения удаления, настраиваемый шаг перемотки и громкости, качество аудио при скачивании по ссылкам (лучшее/среднее/экономия трафика), просмотр размера и очистка кэша скачанных треков
+
+---
 
 ### ✨ v1.5.6
 > 20 августа 2026

@@ -36,6 +36,21 @@ struct AppSettings {
     // Куки браузера для yt-dlp (сайты, требующие вход, напр. Яндекс.Музыка) —
     // "" значит не использовать; иначе имя браузера для --cookies-from-browser
     QString ytDlpCookiesBrowser = "";
+
+    // Качество аудио при скачивании по ссылке: "best" | "medium" | "low"
+    QString streamAudioQuality = "best";
+
+    // Запуск
+    bool launchOnStartup  = false;   // добавлять в автозагрузку Windows
+    bool startMinimized   = false;   // не показывать окно при запуске (сразу в трей)
+    bool autoCheckUpdates = true;    // тихая проверка обновлений при старте
+
+    // Подтверждения
+    bool confirmDelete = true;       // спрашивать перед удалением треков/плейлиста
+
+    // Управление
+    int seekStepSecs = 5;   // шаг перемотки ←/→ (Shift+←/→ всегда ×6)
+    int volumeStep   = 5;   // шаг громкости ↑/↓
 };
 
 class SettingsDialog : public QDialog {
@@ -58,6 +73,8 @@ private slots:
     void setAccentPreset(const QColor &c);
     void liveApply();
     void animateToPage(int index);
+    void clearStreamCache();
+    void refreshCacheSize();
 
 private:
     void buildAppearanceTab(class QWidget *tab);
@@ -94,6 +111,16 @@ private:
 
     QCheckBox *m_discordChk    = nullptr;
     QComboBox *m_cookiesBrowserCombo = nullptr;
+    QComboBox *m_audioQualityCombo   = nullptr;
+
+    QCheckBox *m_launchOnStartupChk = nullptr;
+    QCheckBox *m_startMinimizedChk  = nullptr;
+    QCheckBox *m_autoUpdatesChk     = nullptr;
+    QCheckBox *m_confirmDeleteChk   = nullptr;
+    QComboBox *m_seekStepCombo      = nullptr;
+    QComboBox *m_volumeStepCombo    = nullptr;
+
+    QLabel    *m_cacheSizeLabel = nullptr;
 
     // collect all live-connectable widgets
     QList<QObject*> m_liveWidgets;
