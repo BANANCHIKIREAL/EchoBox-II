@@ -172,10 +172,11 @@ private:
     int  insertStreamPlaceholder(const QUrl &pageUrl);
     void updateStreamPlaceholder(const QUrl &pageUrl, bool ok, const QString &localPath,
                                   const QString &title, const QString &artist,
-                                  const QString &thumbnailUrl);
+                                  const QString &thumbnailUrl, const QString &errorMsg);
     void downloadStreamTrack(const QUrl &pageUrl,
                               std::function<void(bool ok, QString localPath, QString title,
-                                                  QString artist, QString thumbnailUrl)> callback);
+                                                  QString artist, QString thumbnailUrl,
+                                                  QString errorMsg)> callback);
     void beginStreamPlayback(int index, const QUrl &pageUrl);
     void commitStreamPlayback(int index, const QUrl &pageUrl, const QUrl &mediaSource);
     void fetchStreamThumbnail(const QUrl &pageUrl, const QString &thumbnailUrl);

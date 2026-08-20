@@ -84,7 +84,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "1.5.4";
+static const QString kAppVersion = "1.5.5";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -1870,12 +1870,12 @@ void MainWindow::openStreamUrl(const QString &link) {
     const bool shouldAutoplay = (m_playlist.size() == 1);
     m_streamResolving.insert(url);
     downloadStreamTrack(url, [this, url, index, shouldAutoplay]
-            (bool ok, QString localPath, QString title, QString artist, QString thumb) {
+            (bool ok, QString localPath, QString title, QString artist, QString thumb, QString errorMsg) {
         m_streamResolving.remove(url);
-        updateStreamPlaceholder(url, ok, localPath, title, artist, thumb);
+        updateStreamPlaceholder(url, ok, localPath, title, artist, thumb, errorMsg);
         if (shouldAutoplay) {
             if (ok) playTrack(index);
-            else    statusBar()->showMessage("Не удалось получить трек по ссылке", 6000);
+            else    statusBar()->showMessage("Не удалось получить трек: " + errorMsg, 8000);
         }
     });
 }
@@ -1924,14 +1924,17 @@ int MainWindow::insertStreamPlaceholder(const QUrl &pageUrl) {
 
 void MainWindow::updateStreamPlaceholder(const QUrl &pageUrl, bool ok, const QString &localPath,
                                           const QString &title, const QString &artist,
-                                          const QString &thumbnailUrl) {
+                                          const QString &thumbnailUrl, const QString &errorMsg) {
     const int idx = m_playlist.indexOf(pageUrl);
     if (idx < 0) return;
 
     QListWidgetItem *item = m_playlistWidget->item(idx);
 
     if (!ok) {
-        if (item) item->setText(QString("  %1.  ⚠ Ошибка загрузки").arg(idx + 1));
+        if (item) {
+            item->setText(QString("  %1.  ⚠ Ошибка загрузки").arg(idx + 1));
+            item->setToolTip(errorMsg.isEmpty() ? "Неизвестная ошибка" : errorMsg);
+        }
         return;
     }
 
@@ -2011,7 +2014,7 @@ void MainWindow::fetchStreamThumbnail(const QUrl &pageUrl, const QString &thumbn
 }
 
 void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
-        std::function<void(bool, QString, QString, QString, QString)> callback) {
+        std::function<void(bool, QString, QString, QString, QString, QString)> callback) {
     const QString cacheDir = streamCacheDir();
     QDir().mkpath(cacheDir);
     const QString hash = QCryptographicHash::hash(
@@ -2044,16 +2047,28 @@ void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
                     "утилита yt-dlp.\n\n"
                     "Установи её, например: pip install yt-dlp (или winget install "
                     "yt-dlp.yt-dlp), и убедись, что она доступна в PATH — либо просто "
-                    "положи yt-dlp.exe рядом с EchoBoxII.exe.");
+                    "положи yt-dlp.exe рядом с EchoBoxII.exe.\n\n"
+                    "Если yt-dlp.exe лежит рядом, но всё равно не находится — проверь, "
+                    "не удалил/не заблокировал ли его антивирус (для yt-dlp.exe это "
+                    "частое ложное срабатывание).");
             }
-            callback(false, QString(), QString(), QString(), QString());
+            callback(false, QString(), QString(), QString(), QString(),
+                     "yt-dlp.exe не найден или не может быть запущен (возможно, удалён антивирусом)");
         });
 
     connect(proc, &QProcess::finished, this,
         [this, proc, pageUrl, hash, cacheDir, callback](int exitCode, QProcess::ExitStatus exitStatus) {
             proc->deleteLater();
             if (exitStatus != QProcess::NormalExit || exitCode != 0) {
-                callback(false, QString(), QString(), QString(), QString());
+                // Последняя непустая строка stderr обычно и есть суть ошибки
+                // ("ERROR: ..." от yt-dlp) — показываем как есть, без домыслов
+                const QStringList errLines = QString::fromUtf8(proc->readAllStandardError())
+                    .split('\n', Qt::SkipEmptyParts);
+                const QString lastErr = errLines.isEmpty() ? QString() : errLines.last().trimmed();
+                callback(false, QString(), QString(), QString(), QString(),
+                    lastErr.isEmpty()
+                        ? QString("yt-dlp завершился с ошибкой (код %1)").arg(exitCode)
+                        : lastErr);
                 return;
             }
 
@@ -2061,7 +2076,8 @@ void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
             QDir dir(cacheDir);
             const QStringList found = dir.entryList({hash + ".*"}, QDir::Files);
             if (found.isEmpty()) {
-                callback(false, QString(), QString(), QString(), QString());
+                callback(false, QString(), QString(), QString(), QString(),
+                         "yt-dlp отработал успешно, но файл не найден в кэше");
                 return;
             }
             const QString localPath = dir.filePath(found.first());
@@ -2081,7 +2097,7 @@ void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
             if (title.isEmpty())  title  = pageUrl.toString();
             const QString thumb = obj.value("thumbnail").toString();
 
-            callback(true, localPath, title, artist, thumb);
+            callback(true, localPath, title, artist, thumb, QString());
         });
 
     proc->start(ytDlpPath(), args);
@@ -2106,11 +2122,11 @@ void MainWindow::beginStreamPlayback(int index, const QUrl &pageUrl) {
 
     statusBar()->showMessage("Загрузка трека: " + trackDisplayTitle(pageUrl) + " …");
     downloadStreamTrack(pageUrl, [this, index, pageUrl]
-            (bool ok, QString localPath, QString title, QString artist, QString thumb) {
+            (bool ok, QString localPath, QString title, QString artist, QString thumb, QString errorMsg) {
         m_streamResolving.remove(pageUrl);
-        updateStreamPlaceholder(pageUrl, ok, localPath, title, artist, thumb);
+        updateStreamPlaceholder(pageUrl, ok, localPath, title, artist, thumb, errorMsg);
         if (!ok) {
-            statusBar()->showMessage("Не удалось скачать трек: " + pageUrl.toString(), 6000);
+            statusBar()->showMessage("Не удалось скачать трек: " + errorMsg, 8000);
             return;
         }
         // Пользователь мог переключиться на другой трек, пока шло скачивание
