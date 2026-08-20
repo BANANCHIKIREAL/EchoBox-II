@@ -82,7 +82,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "1.5.0";
+static const QString kAppVersion = "1.5.1";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -1285,6 +1285,7 @@ void MainWindow::loadSettings() {
     m_cfg.showStatusBar  = m_settings.value("cfg/showStatusBar", true).toBool();
     m_cfg.closeToTray    = m_settings.value("cfg/closeToTray", true).toBool();
     m_cfg.discordEnabled = m_settings.value("cfg/discordEnabled", true).toBool();
+    m_cfg.ytDlpCookiesBrowser = m_settings.value("cfg/ytDlpCookiesBrowser", "").toString();
 
     if (g_delegate) g_delegate->showIcons = m_cfg.showTrackIcons;
     applyTheme();
@@ -1316,6 +1317,7 @@ void MainWindow::saveSettings() {
     m_settings.setValue("cfg/showStatusBar",  m_cfg.showStatusBar);
     m_settings.setValue("cfg/closeToTray",    m_cfg.closeToTray);
     m_settings.setValue("cfg/discordEnabled", m_cfg.discordEnabled);
+    m_settings.setValue("cfg/ytDlpCookiesBrowser", m_cfg.ytDlpCookiesBrowser);
 
     savePlaylistsToFile();
     saveStreamTracksToFile();
@@ -1967,15 +1969,19 @@ void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
     const QString outTemplate = cacheDir + "/" + hash + ".%(ext)s";
 
     auto *proc = new QProcess(this);
-    const QStringList args = {
+    QStringList args = {
         "--no-playlist", "--no-warnings", "--no-progress",
         // android/web-фоллбэк обходит текущий SABR-эксперимент YouTube, из-за
         // которого чистый audio-only формат недоступен для скачивания — для
         // других сайтов (SoundCloud и т.п.) этот youtube-специфичный аргумент
         // просто игнорируется
         "--extractor-args", "youtube:player_client=android,web",
-        "-f", "bestaudio/best", "--print-json", "-o", outTemplate, pageUrl.toString()
     };
+    // Некоторые сайты (Яндекс.Музыка и т.п.) отдают музыку только вошедшим —
+    // берём куки из браузера пользователя, если это настроено
+    if (!m_cfg.ytDlpCookiesBrowser.isEmpty())
+        args << "--cookies-from-browser" << m_cfg.ytDlpCookiesBrowser;
+    args << "-f" << "bestaudio/best" << "--print-json" << "-o" << outTemplate << pageUrl.toString();
 
     connect(proc, &QProcess::errorOccurred, this,
         [this, proc, callback](QProcess::ProcessError err) {

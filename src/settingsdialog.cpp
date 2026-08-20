@@ -395,6 +395,27 @@ void SettingsDialog::buildIntegrationsTab(QWidget *tab) {
     l->addWidget(m_discordChk);
     m_liveWidgets << m_discordChk;
 
+    l->addWidget(makeHead("Ссылки на музыку",
+        "Некоторые сайты (например Яндекс.Музыка) отдают музыку только\n"
+        "залогиненным — yt-dlp может использовать куки из твоего браузера,\n"
+        "если ты уже вошёл там в нужный сервис. Не гарантирует успех для\n"
+        "каждого сайта, но иногда единственный способ."));
+
+    m_cookiesBrowserCombo = new QComboBox();
+    m_cookiesBrowserCombo->addItem("Не использовать", "");
+    m_cookiesBrowserCombo->addItem("Chrome",   "chrome");
+    m_cookiesBrowserCombo->addItem("Edge",     "edge");
+    m_cookiesBrowserCombo->addItem("Firefox",  "firefox");
+    m_cookiesBrowserCombo->addItem("Brave",    "brave");
+    m_cookiesBrowserCombo->addItem("Opera",    "opera");
+    m_cookiesBrowserCombo->addItem("Vivaldi",  "vivaldi");
+    {
+        const int idx = m_cookiesBrowserCombo->findData(m_result.ytDlpCookiesBrowser);
+        m_cookiesBrowserCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+    }
+    l->addWidget(m_cookiesBrowserCombo);
+    m_liveWidgets << m_cookiesBrowserCombo;
+
     l->addStretch();
 }
 
@@ -461,4 +482,5 @@ void SettingsDialog::collectResult() {
     m_result.closeToTray    = m_trayChk->isChecked();
 
     m_result.discordEnabled = m_discordChk->isChecked();
+    m_result.ytDlpCookiesBrowser = m_cookiesBrowserCombo->currentData().toString();
 }

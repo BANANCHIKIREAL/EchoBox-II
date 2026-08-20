@@ -30,6 +30,10 @@ struct AppSettings {
     bool closeToTray    = true;
 
     bool discordEnabled = true;
+
+    // Куки браузера для yt-dlp (сайты, требующие вход, напр. Яндекс.Музыка) —
+    // "" значит не использовать; иначе имя браузера для --cookies-from-browser
+    QString ytDlpCookiesBrowser = "";
 };
 
 class SettingsDialog : public QDialog {
@@ -78,6 +82,7 @@ private:
     QCheckBox *m_trayChk       = nullptr;
 
     QCheckBox *m_discordChk    = nullptr;
+    QComboBox *m_cookiesBrowserCombo = nullptr;
 
     // collect all live-connectable widgets
     QList<QObject*> m_liveWidgets;
