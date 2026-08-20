@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white"/>
   <img src="https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white"/>
   <img src="https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-red?style=for-the-badge"/>
-  <img src="https://img.shields.io/badge/version-1.5.2-blue?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/version-1.5.3-blue?style=for-the-badge"/>
 </p>
 
 <p align="center">
@@ -185,6 +185,20 @@ EchoBox-II/
 ---
 
 ## История версий
+
+### ✨ v1.5.3
+> 20 августа 2026
+
+**Новые функции**
+- Плавные анимации: диалог настроек теперь появляется с фейдом и переключает разделы кроссфейдом, докинг мини-плеера к верху экрана едет плавно вместо мгновенного скачка
+
+**Исправления**
+- Иконки разделов в настройках были размытыми — рисовались в 15/17px при том, что список показывал их в 18px; выровнял размеры
+
+**Прочее**
+- Кнопка вывода музыки в микрофон временно скрыта из интерфейса (сама функция не удалена)
+
+---
 
 ### ✨ v1.5.2
 > 20 августа 2026
