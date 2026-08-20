@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white"/>
   <img src="https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white"/>
   <img src="https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-red?style=for-the-badge"/>
-  <img src="https://img.shields.io/badge/version-1.5.4-blue?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/version-1.5.5-blue?style=for-the-badge"/>
 </p>
 
 <p align="center">
@@ -185,6 +185,15 @@ EchoBox-II/
 ---
 
 ## История версий
+
+### 🛠 v1.5.5
+> 20 августа 2026
+
+**Исправления**
+- Ошибка загрузки трека по ссылке теперь показывает реальную причину (сообщение от yt-dlp) в подсказке карточки трека и в статус-баре, а не общее «ошибка загрузки» — упрощает диагностику проблем на чужих машинах (например, антивирус блокирует `yt-dlp.exe`)
+- Диалог об отсутствующем yt-dlp теперь явно упоминает антивирус как частую причину, если файл лежит рядом, но не запускается
+
+---
 
 ### 🛠 v1.5.4
 > 20 августа 2026
