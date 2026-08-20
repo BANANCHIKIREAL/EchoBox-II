@@ -88,7 +88,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "2.0.1";
+static const QString kAppVersion = "2.0.2";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -2370,9 +2370,10 @@ void MainWindow::togglePlayPause() {
     }
 }
 
-void MainWindow::stop() { m_player->stop(); }
+void MainWindow::stop() { m_player->stop(); popButtonIcon(m_stopBtn); }
 
 void MainWindow::previous() {
+    popButtonIcon(m_prevBtn);
     if (m_playlist.isEmpty()) return;
     int prevIdx = m_currentIndex - 1;
     if (prevIdx < 0) prevIdx = m_playlist.size() - 1; // always wrap on manual press
@@ -2380,6 +2381,7 @@ void MainWindow::previous() {
 }
 
 void MainWindow::next() {
+    popButtonIcon(m_nextBtn);
     // Manual next: always advance (wrap around, no stop)
     if (m_playlist.isEmpty()) return;
     if (m_repeat == RepeatMode::One) { playNext(false); return; }
