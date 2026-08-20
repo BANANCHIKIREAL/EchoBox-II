@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white"/>
   <img src="https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white"/>
   <img src="https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-red?style=for-the-badge"/>
-  <img src="https://img.shields.io/badge/version-1.5.8-blue?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/version-1.5.9-blue?style=for-the-badge"/>
 </p>
 
 <p align="center">
@@ -185,6 +185,14 @@ EchoBox-II/
 ---
 
 ## История версий
+
+### 🛠 v1.5.9
+> 20 августа 2026
+
+**Исправления**
+- Ошибка скачивания трека по ссылке теперь показывается в отдельном окне с текстом, который можно выделить и скопировать (Ctrl+C или кнопка «Копировать») — раньше текст обрезался и пропадал в строке состояния
+
+---
 
 ### ✨ v1.5.8
 > 20 августа 2026

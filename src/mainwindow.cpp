@@ -10,6 +10,7 @@
 #include "discordrpc.h"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QScreen>
 #include <QPropertyAnimation>
 #include <QVariantAnimation>
@@ -87,7 +88,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "1.5.8";
+static const QString kAppVersion = "1.5.9";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -2055,7 +2056,8 @@ void MainWindow::openStreamUrl(const QString &link) {
             playTrack(index);   // playTrack сам обновит баннер на этап воспроизведения
         } else {
             hideLoadingBanner();
-            if (shouldAutoplay) statusBar()->showMessage("Не удалось получить трек: " + errorMsg, 8000);
+            if (shouldAutoplay)
+                showCopyableError("Не удалось получить трек", errorMsg);
         }
     });
 }
@@ -2315,7 +2317,7 @@ void MainWindow::beginStreamPlayback(int index, const QUrl &pageUrl) {
         updateStreamPlaceholder(pageUrl, ok, localPath, title, artist, thumb, errorMsg);
         if (!ok) {
             hideLoadingBanner();
-            statusBar()->showMessage("Не удалось скачать трек: " + errorMsg, 8000);
+            showCopyableError("Не удалось скачать трек", errorMsg);
             return;
         }
         // Пользователь мог переключиться на другой трек, пока шло скачивание
@@ -2868,6 +2870,18 @@ void MainWindow::hideLoadingBanner() {
         }
     });
     anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void MainWindow::showCopyableError(const QString &title, const QString &message) {
+    QMessageBox box(QMessageBox::Warning, title, message, QMessageBox::NoButton, this);
+    box.setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+    QPushButton *copyBtn = box.addButton("Копировать", QMessageBox::ActionRole);
+    box.addButton("Закрыть", QMessageBox::RejectRole);
+    box.exec();
+    if (box.clickedButton() == copyBtn) {
+        QGuiApplication::clipboard()->setText(message);
+        statusBar()->showMessage("Текст ошибки скопирован в буфер обмена", 3000);
+    }
 }
 
 void MainWindow::popButtonIcon(QToolButton *btn) {
