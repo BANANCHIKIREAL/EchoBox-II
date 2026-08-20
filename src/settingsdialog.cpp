@@ -22,6 +22,9 @@
 #include <QStandardPaths>
 #include <QFontComboBox>
 #include <QFontDatabase>
+#include <QPropertyAnimation>
+#include <QGraphicsOpacityEffect>
+#include <QEasingCurve>
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -124,11 +127,11 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
 
     const QColor iconColor(0xa6, 0xad, 0xc8);
     const struct { QIcon icon; QString title; QWidget *page; } sections[] = {
-        { Ico::sliders(iconColor, 17),    "Внешний вид", tApp  },
-        { Ico::play(iconColor, 15),       "Плеер",       tPlay },
-        { Ico::folder(iconColor, 17),     "Файлы",       tFile },
-        { Ico::windowIcon(iconColor, 17), "Интерфейс",   tUi   },
-        { Ico::link(iconColor, 17),       "Интеграции",  tIntg },
+        { Ico::sliders(iconColor, 18),    "Внешний вид", tApp  },
+        { Ico::play(iconColor, 18),       "Плеер",       tPlay },
+        { Ico::folder(iconColor, 18),     "Файлы",       tFile },
+        { Ico::windowIcon(iconColor, 18), "Интерфейс",   tUi   },
+        { Ico::link(iconColor, 18),       "Интеграции",  tIntg },
     };
     for (const auto &sec : sections) {
         auto *item = new QListWidgetItem(sec.icon, "  " + sec.title);
@@ -136,8 +139,9 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
         sidebar->addItem(item);
         stack->addWidget(sec.page);
     }
+    m_stack = stack;
     sidebar->setCurrentRow(0);
-    connect(sidebar, &QListWidget::currentRowChanged, stack, &QStackedWidget::setCurrentIndex);
+    connect(sidebar, &QListWidget::currentRowChanged, this, &SettingsDialog::animateToPage);
 
     auto *sidebarWrap = new QWidget(this);
     sidebarWrap->setObjectName("settingsSidebarWrap");
@@ -508,6 +512,49 @@ void SettingsDialog::connectLive() {
 void SettingsDialog::liveApply() {
     collectResult();
     emit applied(m_result);
+}
+
+void SettingsDialog::showEvent(QShowEvent *event) {
+    QDialog::showEvent(event);
+    setWindowOpacity(0.0);
+    auto *anim = new QPropertyAnimation(this, "windowOpacity", this);
+    anim->setDuration(180);
+    anim->setStartValue(0.0);
+    anim->setEndValue(1.0);
+    anim->setEasingCurve(QEasingCurve::OutCubic);
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void SettingsDialog::animateToPage(int index) {
+    if (!m_stack || index < 0 || index == m_stack->currentIndex()) return;
+
+    QWidget *outPage = m_stack->currentWidget();
+    auto *outEffect = new QGraphicsOpacityEffect(outPage);
+    outPage->setGraphicsEffect(outEffect);
+    auto *fadeOut = new QPropertyAnimation(outEffect, "opacity", this);
+    fadeOut->setDuration(110);
+    fadeOut->setStartValue(1.0);
+    fadeOut->setEndValue(0.0);
+    fadeOut->setEasingCurve(QEasingCurve::OutCubic);
+
+    connect(fadeOut, &QPropertyAnimation::finished, this, [this, outPage, index]{
+        outPage->setGraphicsEffect(nullptr);
+        m_stack->setCurrentIndex(index);
+
+        QWidget *inPage = m_stack->currentWidget();
+        auto *inEffect = new QGraphicsOpacityEffect(inPage);
+        inPage->setGraphicsEffect(inEffect);
+        auto *fadeIn = new QPropertyAnimation(inEffect, "opacity", this);
+        fadeIn->setDuration(160);
+        fadeIn->setStartValue(0.0);
+        fadeIn->setEndValue(1.0);
+        fadeIn->setEasingCurve(QEasingCurve::OutCubic);
+        connect(fadeIn, &QPropertyAnimation::finished, this, [inPage]{
+            inPage->setGraphicsEffect(nullptr);
+        });
+        fadeIn->start(QAbstractAnimation::DeleteWhenStopped);
+    });
+    fadeOut->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 void SettingsDialog::pickAccentColor() {

@@ -8,6 +8,8 @@ class QCheckBox;
 class QComboBox;
 class QFontComboBox;
 class QLineEdit;
+class QStackedWidget;
+class QShowEvent;
 
 struct AppSettings {
     QString theme        = "mocha";
@@ -48,10 +50,14 @@ public slots:
 signals:
     void applied(const AppSettings &s);
 
+protected:
+    void showEvent(QShowEvent *event) override;
+
 private slots:
     void pickAccentColor();
     void setAccentPreset(const QColor &c);
     void liveApply();
+    void animateToPage(int index);
 
 private:
     void buildAppearanceTab(class QWidget *tab);
@@ -64,6 +70,8 @@ private:
     void refreshPresetSwatches();
 
     AppSettings m_result;
+
+    QStackedWidget *m_stack = nullptr;
 
     QLabel        *m_accentSwatch    = nullptr;
     QList<class QPushButton*> m_presetBtns;

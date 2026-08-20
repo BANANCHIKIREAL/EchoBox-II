@@ -11,6 +11,8 @@
 
 #include <QApplication>
 #include <QScreen>
+#include <QPropertyAnimation>
+#include <QEasingCurve>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QToolButton>
@@ -82,7 +84,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "1.5.2";
+static const QString kAppVersion = "1.5.3";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -492,6 +494,7 @@ void MainWindow::setupUi() {
     m_micBtn->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_micBtn, &QToolButton::customContextMenuRequested,
             this, [this]{ showMicMenu(); });
+    m_micBtn->setVisible(false); // временно скрыта — APO-вывод в микрофон ещё не готов
 
     QHBoxLayout *c2 = new QHBoxLayout;
     c2->setSpacing(6);
@@ -2322,12 +2325,22 @@ void MainWindow::toggleMiniDock() {
     m_miniDocked = !m_miniDocked;
     const QRect avail = scr->availableGeometry();
 
+    QRect target;
     if (m_miniDocked) {
         m_miniUndockedGeometry = geometry();
-        setGeometry(avail.left(), avail.top(), avail.width(), height());
+        target = QRect(avail.left(), avail.top(), avail.width(), height());
     } else if (m_miniUndockedGeometry.isValid()) {
-        setGeometry(m_miniUndockedGeometry);
+        target = m_miniUndockedGeometry;
+    } else {
+        return;
     }
+
+    auto *anim = new QPropertyAnimation(this, "geometry", this);
+    anim->setDuration(220);
+    anim->setStartValue(geometry());
+    anim->setEndValue(target);
+    anim->setEasingCurve(QEasingCurve::OutCubic);
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 void MainWindow::toggleAlwaysOnTop() {
