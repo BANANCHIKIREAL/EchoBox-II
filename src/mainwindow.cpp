@@ -88,7 +88,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "2.0.0";
+static const QString kAppVersion = "2.0.1";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -791,7 +791,7 @@ void MainWindow::setupUi() {
         const QColor ctrl(0xcd, 0xd6, 0xf4);
         const QColor play(0x1e, 0x1e, 0x2e);
         m_prevBtn->setIcon(Ico::prev(ctrl, 22));        m_prevBtn->setIconSize({22,22});
-        m_playPauseBtn->setIcon(Ico::play(play, 30));  m_playPauseBtn->setIconSize({30,30});
+        m_playPauseBtn->setIcon(Ico::play(play, 36));  m_playPauseBtn->setIconSize({36,36});
         m_nextBtn->setIcon(Ico::next(ctrl, 22));        m_nextBtn->setIconSize({22,22});
         m_stopBtn->setIcon(Ico::stop(ctrl, 16));        m_stopBtn->setIconSize({16,16});
         m_muteBtn->setIcon(Ico::volume(3, ctrl, 20));   m_muteBtn->setIconSize({20,20});
@@ -1358,7 +1358,7 @@ void MainWindow::applyTheme() {
     const bool playing = m_player && m_player->playbackState() == QMediaPlayer::PlayingState;
 
     if (m_playPauseBtn) {
-        m_playPauseBtn->setIcon(playing ? Ico::pause(iconC,30) : Ico::play(iconC,30));
+        m_playPauseBtn->setIcon(playing ? Ico::pause(iconC,36) : Ico::play(iconC,36));
         m_playPauseBtn->setStyleSheet(QString(
             "QToolButton#playBtn{background-color:%1;border-radius:30px;border:none;}"
             "QToolButton#playBtn:hover{background-color:%2;}"
@@ -2646,7 +2646,7 @@ void MainWindow::onPlaybackStateChanged(QMediaPlayer::PlaybackState state) {
     const bool playing = (state == QMediaPlayer::PlayingState);
     const QColor ac = m_cfg.accentColor;
     const QColor iconC = ac.lightness() > 160 ? QColor(0x1e,0x1e,0x2e) : QColor(0xff,0xff,0xff);
-    m_playPauseBtn->setIcon(playing ? Ico::pause(iconC, 30) : Ico::play(iconC, 30));
+    m_playPauseBtn->setIcon(playing ? Ico::pause(iconC, 36) : Ico::play(iconC, 36));
     m_miniPlayBtn->setIcon(playing  ? Ico::pause(iconC, 22) : Ico::play(iconC, 22));
     popButtonIcon(m_playPauseBtn);
     popButtonIcon(m_miniPlayBtn);
@@ -2946,12 +2946,26 @@ void MainWindow::showCopyableError(const QString &title, const QString &message)
 
 void MainWindow::popButtonIcon(QToolButton *btn) {
     if (!btn) return;
-    const QSize normal = btn->iconSize();
+
+    // Если предыдущий pop этой же кнопки ещё не доиграл (например несколько
+    // сигналов подряд при смене трека), btn->iconSize() сейчас — промежуточное,
+    // ещё не выросшее значение. Взять его за "нормальный" размер значило бы
+    // навсегда застрять на нём — берём endValue() бегущей анимации вместо
+    // текущего iconSize(), он всегда верный
+    auto *prevAnim = qobject_cast<QPropertyAnimation*>(
+        btn->property("popAnim").value<QObject*>());
+    const QSize normal = prevAnim ? prevAnim->endValue().toSize() : btn->iconSize();
+    if (prevAnim) prevAnim->stop();
+
     auto *anim = new QPropertyAnimation(btn, "iconSize", btn);
     anim->setDuration(240);
     anim->setStartValue(normal * 0.7);
     anim->setEndValue(normal);
     anim->setEasingCurve(QEasingCurve::OutBack);
+    btn->setProperty("popAnim", QVariant::fromValue<QObject*>(anim));
+    connect(anim, &QPropertyAnimation::finished, btn, [btn]{
+        btn->setProperty("popAnim", QVariant());
+    });
     anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
