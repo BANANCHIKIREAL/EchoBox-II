@@ -137,6 +137,7 @@ private slots:
     // Other
     void showAbout();
     void checkForUpdates(bool manual);
+    void downloadAndInstallUpdate(const QString &assetUrl, const QString &tag);
     void openRecentFile(const QString &path);
     void openSettings();
     // Library scanner
@@ -204,6 +205,8 @@ private:
 
     void savePlaylistsToFile();
     void loadPlaylistsFromFile();
+    void saveStreamTracksToFile();
+    void loadStreamTracksFromFile();
     QString trackIconPath(const QUrl &url) const;
     void applyTrackIcon(QListWidgetItem *item, const QUrl &url);
     void reloadTrackIcons();

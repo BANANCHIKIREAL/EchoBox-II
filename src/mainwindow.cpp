@@ -82,7 +82,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "1.4.1";
+static const QString kAppVersion = "1.5.0";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -692,7 +692,13 @@ void MainWindow::setupUi() {
     auto *upBtn  = mkSmall("↑","Вверх");
     auto *dnBtn  = mkSmall("↓","Вниз");
     auto *rmBtn  = mkSmall("✕","Удалить  Del");
-    auto *clrBtn = mkSmall("⊘","Очистить плейлист");
+
+    auto *clrBtn = new QToolButton(this);
+    clrBtn->setObjectName("clearBtn");
+    clrBtn->setFixedSize(26, 26);
+    clrBtn->setIcon(Ico::trash(QColor(0xa6,0xad,0xc8), 15));
+    clrBtn->setIconSize({15, 15});
+    clrBtn->setToolTip("Очистить плейлист");
 
     plH->addWidget(m_searchEdit, 1);
     plH->addWidget(m_playlistInfo);
@@ -975,6 +981,13 @@ void MainWindow::applyTheme() {
         }
         QToolButton#smallBtn:hover { background-color: #45475a; color: #cdd6f4; }
 
+        QToolButton#clearBtn {
+            background-color: #313244;
+            border: none;
+            border-radius: 5px;
+        }
+        QToolButton#clearBtn:hover { background-color: #45283a; }
+
         QSlider#seekSlider_unused { min-height: 20px; }
         QSlider#seekSlider_unused::groove:horizontal {
             height: 5px; background: #313244; border-radius: 3px;
@@ -1055,19 +1068,28 @@ void MainWindow::applyTheme() {
             font-size: 11px;
         }
         QScrollBar:vertical {
-            background: #181825;
-            width: 7px; border-radius: 4px;
+            background: transparent;
+            width: 8px; margin: 2px 1px 2px 0;
         }
         QScrollBar::handle:vertical {
-            background: #45475a; border-radius: 4px; min-height: 20px;
+            background: #45475a; border-radius: 4px; min-height: 28px;
         }
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        QScrollBar::handle:vertical:hover   { background: #585b70; }
+        QScrollBar::handle:vertical:pressed { background: #cba6f7; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; border: none; background: none; }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+
         QScrollBar:horizontal {
-            background: #181825; height: 7px; border-radius: 4px;
+            background: transparent;
+            height: 8px; margin: 0 2px 1px 2px;
         }
         QScrollBar::handle:horizontal {
-            background: #45475a; border-radius: 4px;
+            background: #45475a; border-radius: 4px; min-width: 28px;
         }
+        QScrollBar::handle:horizontal:hover   { background: #585b70; }
+        QScrollBar::handle:horizontal:pressed { background: #cba6f7; }
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; border: none; background: none; }
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }
 
         QTabBar#playlistTabBar {
             background: transparent;
@@ -1266,6 +1288,7 @@ void MainWindow::loadSettings() {
 
     if (g_delegate) g_delegate->showIcons = m_cfg.showTrackIcons;
     applyTheme();
+    loadStreamTracksFromFile();
     loadPlaylistsFromFile();
 }
 
@@ -1295,6 +1318,7 @@ void MainWindow::saveSettings() {
     m_settings.setValue("cfg/discordEnabled", m_cfg.discordEnabled);
 
     savePlaylistsToFile();
+    saveStreamTracksToFile();
 }
 
 // ─── File operations ─────────────────────────────────────────────────────────
@@ -1814,6 +1838,7 @@ void MainWindow::addDirectStreamUrl(const QUrl &url) {
     info.title      = name;
     info.isDirectUrl = true;
     m_streamTracks[url] = info;
+    saveStreamTracksToFile();
 
     m_playlist.append(url);
     const int index = m_playlist.size() - 1;
@@ -1863,6 +1888,7 @@ void MainWindow::updateStreamPlaceholder(const QUrl &pageUrl, bool ok, const QSt
     info.title         = title;
     info.artist        = artist;
     info.thumbnailUrl  = thumbnailUrl;
+    saveStreamTracksToFile();
 
     const QString label = artist.isEmpty() ? title : artist + "  —  " + title;
     if (item) {
@@ -2527,6 +2553,7 @@ void MainWindow::showAbout() {
         "<li>Сканер библиотеки (Файл → Сканировать библиотеку)</li>"
         "<li>Кастомный шрифт интерфейса</li>"
         "<li>Discord Rich Presence</li>"
+        "<li>Автообновление (Справка → Проверить обновления)</li>"
         "<li>Кроссфейд, память позиции, несколько плейлистов</li>"
         "</ul>"
         "<hr>"
@@ -2615,6 +2642,17 @@ void MainWindow::checkForUpdates(bool manual) {
         const QString skipKey = "update/skippedVersion";
         if (!manual && m_settings.value(skipKey).toString() == tag) return;
 
+        // Если к релизу приложен .zip — можем скачать и поставить сами,
+        // не отправляя пользователя на GitHub руками
+        QString assetUrl;
+        for (const QJsonValue &a : newest.value("assets").toArray()) {
+            const QJsonObject ao = a.toObject();
+            if (ao.value("name").toString().endsWith(".zip", Qt::CaseInsensitive)) {
+                assetUrl = ao.value("browser_download_url").toString();
+                break;
+            }
+        }
+
         QMessageBox box(this);
         box.setWindowTitle("Доступно обновление");
         box.setTextFormat(Qt::RichText);
@@ -2624,14 +2662,104 @@ void MainWindow::checkForUpdates(bool manual) {
             "<h3 style='color:#cba6f7'>EchoBox II %1</h3>"
             "<p>У вас установлена версия %2</p>%3")
                 .arg(tag, kAppVersion, notesHtml));
-        QPushButton *downloadBtn = box.addButton("Скачать", QMessageBox::AcceptRole);
+        QPushButton *actionBtn = box.addButton(
+            assetUrl.isEmpty() ? "Скачать со страницы релиза" : "Установить",
+            QMessageBox::AcceptRole);
         box.addButton(manual ? "Закрыть" : "Пропустить эту версию", QMessageBox::RejectRole);
         box.exec();
 
-        if (box.clickedButton() == downloadBtn)
-            QDesktopServices::openUrl(QUrl(url));
-        else if (!manual)
+        if (box.clickedButton() == actionBtn) {
+            if (!assetUrl.isEmpty()) downloadAndInstallUpdate(assetUrl, tag);
+            else                     QDesktopServices::openUrl(QUrl(url));
+        } else if (!manual) {
             m_settings.setValue(skipKey, tag);
+        }
+    });
+}
+
+void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString &tag) {
+    statusBar()->showMessage("Скачивание обновления " + tag + "…");
+
+    QNetworkReply *reply = m_streamArtNam->get(QNetworkRequest(QUrl(assetUrl)));
+    connect(reply, &QNetworkReply::downloadProgress, this,
+        [this](qint64 received, qint64 total) {
+            if (total > 0)
+                statusBar()->showMessage(
+                    QString("Скачивание обновления… %1%").arg(int(received * 100 / total)));
+        });
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, tag]{
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            statusBar()->showMessage("Не удалось скачать обновление", 6000);
+            return;
+        }
+        const QByteArray data = reply->readAll();
+
+        const QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+                               + "/EchoBoxII_update";
+        QDir(tempDir).removeRecursively();
+        QDir().mkpath(tempDir);
+        const QString zipPath     = tempDir + "/update.zip";
+        const QString extractDir  = tempDir + "/extracted";
+
+        QFile zf(zipPath);
+        if (!zf.open(QIODevice::WriteOnly) || zf.write(data) < 0) {
+            statusBar()->showMessage("Не удалось сохранить файл обновления", 6000);
+            return;
+        }
+        zf.close();
+        QDir().mkpath(extractDir);
+
+        // Распаковка через PowerShell (есть на любой Windows 10/11 из коробки)
+        QProcess extractProc;
+        extractProc.start("powershell", {
+            "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+            QString("Expand-Archive -LiteralPath '%1' -DestinationPath '%2' -Force")
+                .arg(zipPath, extractDir)
+        });
+        extractProc.waitForFinished(60000);
+        if (extractProc.exitCode() != 0) {
+            statusBar()->showMessage("Не удалось распаковать обновление", 6000);
+            return;
+        }
+
+        const QString exeDir  = QCoreApplication::applicationDirPath();
+        const QString exeName = QFileInfo(QCoreApplication::applicationFilePath()).fileName();
+        const QString scriptPath = tempDir + "/apply_update.ps1";
+
+        QFile script(scriptPath);
+        if (!script.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            statusBar()->showMessage("Не удалось подготовить установку обновления", 6000);
+            return;
+        }
+        QTextStream out(&script);
+        // Ждём, пока текущий процесс закроется, копируем поверх установки
+        // (со снимком старой версии в TEMP на случай отката), запускаем заново
+        out << "$targetPid = " << QCoreApplication::applicationPid() << "\n"
+            << "for ($i = 0; $i -lt 150; $i++) {\n"
+            << "    if (-not (Get-Process -Id $targetPid -ErrorAction SilentlyContinue)) { break }\n"
+            << "    Start-Sleep -Milliseconds 200\n"
+            << "}\n"
+            << "$src = '" << extractDir << "'\n"
+            << "if (-not (Test-Path (Join-Path $src '" << exeName << "'))) {\n"
+            << "    $sub = Get-ChildItem -Path $src -Directory | Select-Object -First 1\n"
+            << "    if ($sub) { $src = $sub.FullName }\n"
+            << "}\n"
+            << "$backup = Join-Path $env:TEMP ('EchoBoxII_backup_' + (Get-Date -Format 'yyyyMMddHHmmss'))\n"
+            << "Copy-Item -Path '" << exeDir << "' -Destination $backup -Recurse -Force -ErrorAction SilentlyContinue\n"
+            << "robocopy $src '" << exeDir << "' /E /IS /IT /NFL /NDL /NJH /NJS | Out-Null\n"
+            << "Start-Process -FilePath (Join-Path '" << exeDir << "' '" << exeName << "')\n"
+            << "Remove-Item -Recurse -Force '" << tempDir << "' -ErrorAction SilentlyContinue\n";
+        script.close();
+
+        QProcess::startDetached("powershell",
+            {"-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", scriptPath});
+
+        QMessageBox::information(this, "Обновление",
+            "Обновление " + tag + " скачано. Приложение сейчас закроется и обновится "
+            "автоматически, затем перезапустится само.");
+        qApp->quit();
     });
 }
 
@@ -3026,6 +3154,51 @@ void MainWindow::loadPlaylistsFromFile() {
     m_tabBar->setCurrentIndex(m_activePl);
     m_tabBar->blockSignals(false);
     loadPlaylistState(m_activePl);
+}
+
+// Метаданные треков по ссылке (название/исполнитель/обложка/путь к скачанному
+// файлу) — без этого после перезапуска такие треки показывали бы голый URL
+// вместо названия и перекачивались бы заново при каждом воспроизведении.
+void MainWindow::saveStreamTracksToFile() {
+    const QString dir = m_cfg.playlistsFolder.isEmpty()
+        ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        : m_cfg.playlistsFolder;
+    QDir().mkpath(dir);
+
+    QJsonObject root;
+    for (auto it = m_streamTracks.constBegin(); it != m_streamTracks.constEnd(); ++it) {
+        QJsonObject obj;
+        obj["title"]        = it->title;
+        obj["artist"]       = it->artist;
+        obj["thumbnailUrl"] = it->thumbnailUrl;
+        obj["localPath"]    = it->localPath;
+        obj["isDirectUrl"]  = it->isDirectUrl;
+        root[it.key().toString()] = obj;
+    }
+
+    QFile f(dir + "/streamtracks.json");
+    if (f.open(QIODevice::WriteOnly))
+        f.write(QJsonDocument(root).toJson());
+}
+
+void MainWindow::loadStreamTracksFromFile() {
+    const QString dir = m_cfg.playlistsFolder.isEmpty()
+        ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        : m_cfg.playlistsFolder;
+    QFile f(dir + "/streamtracks.json");
+    if (!f.open(QIODevice::ReadOnly)) return;
+
+    const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
+    for (auto it = root.constBegin(); it != root.constEnd(); ++it) {
+        const QJsonObject obj = it.value().toObject();
+        StreamTrackInfo info;
+        info.title        = obj["title"].toString();
+        info.artist        = obj["artist"].toString();
+        info.thumbnailUrl  = obj["thumbnailUrl"].toString();
+        info.localPath      = obj["localPath"].toString();
+        info.isDirectUrl    = obj["isDirectUrl"].toBool();
+        m_streamTracks[QUrl(it.key())] = info;
+    }
 }
 
 // ─── Settings dialog ──────────────────────────────────────────────────────────
