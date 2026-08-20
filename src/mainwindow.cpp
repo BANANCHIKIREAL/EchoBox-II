@@ -42,6 +42,7 @@
 #include <QSystemTrayIcon>
 #include <QStackedWidget>
 #include <QVideoWidget>
+#include <QProgressBar>
 #include <QDirIterator>
 #include <QRandomGenerator>
 #include <QPainter>
@@ -86,12 +87,35 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "1.5.6";
+static const QString kAppVersion = "1.5.7";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
 static const QString kUpdateApiUrl =
     "https://api.github.com/repos/BANANCHIKIREAL/EchoBox-II/releases";
+
+// ─── Автозапуск с Windows ────────────────────────────────────────────────────
+// Реестр — единственный источник истины (см. loadSettings/openSettings):
+// так UI всегда показывает актуальное состояние, даже если юзер выключил
+// автозапуск не через наши настройки, а через Параметры Windows напрямую.
+static const char *kAutostartRegPath =
+    "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+static const char *kAutostartRegKey = "EchoBoxII";
+
+static bool isLaunchOnStartupEnabled() {
+    QSettings runKey(kAutostartRegPath, QSettings::NativeFormat);
+    return runKey.contains(kAutostartRegKey);
+}
+
+static void setLaunchOnStartup(bool enabled) {
+    QSettings runKey(kAutostartRegPath, QSettings::NativeFormat);
+    if (enabled) {
+        const QString exePath = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
+        runKey.setValue(kAutostartRegKey, "\"" + exePath + "\"");
+    } else {
+        runKey.remove(kAutostartRegKey);
+    }
+}
 
 const QStringList MainWindow::VIDEO_EXTS = {"mp4","mkv","avi","mov","webm","flv","wmv","m2ts"};
 const QStringList MainWindow::MEDIA_FILTER = {
@@ -256,10 +280,12 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowIcon(icon);
 
     // Тихая фоновая проверка обновлений (не мешает старту, не спамит окнами)
-    QTimer::singleShot(3000, this, [this]{ checkForUpdates(false); });
+    QTimer::singleShot(3000, this, [this]{ if (m_cfg.autoCheckUpdates) checkForUpdates(false); });
 }
 
 MainWindow::~MainWindow() { apoCloseRing(); saveSettings(); }
+
+bool MainWindow::startsMinimized() const { return m_cfg.startMinimized; }
 
 // ─── Menu bar ────────────────────────────────────────────────────────────────
 
@@ -406,6 +432,25 @@ void MainWindow::setupUi() {
     rl->addSpacing(2);
     rl->addWidget(m_artistLabel);
     rl->addWidget(m_albumLabel);
+
+    // ── Баннер загрузки (скачивание трека по ссылке / обновления) ────────────
+    m_loadingBanner = new QWidget(this);
+    m_loadingBanner->setObjectName("loadingBanner");
+    auto *lbL = new QHBoxLayout(m_loadingBanner);
+    lbL->setContentsMargins(0, 6, 0, 0);
+    lbL->setSpacing(8);
+    m_loadingBar = new QProgressBar(this);
+    m_loadingBar->setObjectName("loadingBar");
+    m_loadingBar->setRange(0, 0);
+    m_loadingBar->setTextVisible(false);
+    m_loadingBar->setFixedSize(90, 6);
+    m_loadingText = new QLabel(this);
+    m_loadingText->setObjectName("loadingText");
+    lbL->addWidget(m_loadingBar);
+    lbL->addWidget(m_loadingText, 1);
+    m_loadingBanner->setVisible(false);
+    rl->addWidget(m_loadingBanner);
+
     rl->addStretch(1);
 
     // ── Visualizer ────────────────────────────────────────────────────────────
@@ -929,6 +974,20 @@ void MainWindow::applyTheme() {
         QLabel#playlistInfo{ color: #6c7086; font-size: 11px; padding: 0 6px; }
         QLabel#miniTitle   { color: #cdd6f4; font-size: 13px; font-weight: bold; padding: 0 6px; }
 
+        QLabel#loadingText {
+            color: ACCENT;
+            font-size: 12px;
+        }
+        QProgressBar#loadingBar {
+            background-color: rgba(255, 255, 255, 20);
+            border: none;
+            border-radius: 3px;
+        }
+        QProgressBar#loadingBar::chunk {
+            background-color: ACCENT;
+            border-radius: 3px;
+        }
+
         QFrame#separator { color: #313244; max-height: 1px; background: #313244; }
         QWidget#miniBar  { background-color: transparent; }
         QLabel#miniAlbumArt { border-radius: 6px; background-color: #313244; }
@@ -1326,7 +1385,18 @@ void MainWindow::loadSettings() {
     m_cfg.showStatusBar  = m_settings.value("cfg/showStatusBar", true).toBool();
     m_cfg.closeToTray    = m_settings.value("cfg/closeToTray", true).toBool();
     m_cfg.discordEnabled = m_settings.value("cfg/discordEnabled", true).toBool();
-    m_cfg.ytDlpCookiesBrowser = m_settings.value("cfg/ytDlpCookiesBrowser", "").toString();
+    m_cfg.ytDlpCookiesBrowser  = m_settings.value("cfg/ytDlpCookiesBrowser", "").toString();
+    m_cfg.streamAudioQuality   = m_settings.value("cfg/streamAudioQuality", "best").toString();
+
+    m_cfg.startMinimized   = m_settings.value("cfg/startMinimized", false).toBool();
+    m_cfg.autoCheckUpdates = m_settings.value("cfg/autoCheckUpdates", true).toBool();
+    m_cfg.confirmDelete    = m_settings.value("cfg/confirmDelete", true).toBool();
+    m_cfg.seekStepSecs     = m_settings.value("cfg/seekStepSecs", 5).toInt();
+    m_cfg.volumeStep       = m_settings.value("cfg/volumeStep", 5).toInt();
+    // Автозапуск — единственный источник истины это сам реестр (не дублируем
+    // в QSettings), иначе они могут разойтись, если юзер отключит его вручную
+    // через диспетчер задач/параметры Windows
+    m_cfg.launchOnStartup  = isLaunchOnStartupEnabled();
 
     if (g_delegate) g_delegate->showIcons = m_cfg.showTrackIcons;
     applyTheme();
@@ -1359,6 +1429,14 @@ void MainWindow::saveSettings() {
     m_settings.setValue("cfg/closeToTray",    m_cfg.closeToTray);
     m_settings.setValue("cfg/discordEnabled", m_cfg.discordEnabled);
     m_settings.setValue("cfg/ytDlpCookiesBrowser", m_cfg.ytDlpCookiesBrowser);
+    m_settings.setValue("cfg/streamAudioQuality",  m_cfg.streamAudioQuality);
+    m_settings.setValue("cfg/startMinimized",      m_cfg.startMinimized);
+    m_settings.setValue("cfg/autoCheckUpdates",    m_cfg.autoCheckUpdates);
+    m_settings.setValue("cfg/confirmDelete",       m_cfg.confirmDelete);
+    m_settings.setValue("cfg/seekStepSecs",        m_cfg.seekStepSecs);
+    m_settings.setValue("cfg/volumeStep",          m_cfg.volumeStep);
+    // launchOnStartup не хранится в QSettings — источник истины реестр,
+    // применяется явно в openSettings() при нажатии "Сохранить"
 
     savePlaylistsToFile();
     saveStreamTracksToFile();
@@ -1501,7 +1579,8 @@ void MainWindow::addFolder(const QString &dir) {
 
 void MainWindow::clearPlaylist() {
     if (m_playlist.isEmpty()) return;
-    if (QMessageBox::question(this, "Очистить плейлист",
+    if (m_cfg.confirmDelete &&
+        QMessageBox::question(this, "Очистить плейлист",
             QString("Удалить все %1 треков из плейлиста?").arg(m_playlist.size()),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
         return;
@@ -1531,7 +1610,8 @@ void MainWindow::removeSelectedTracks() {
     const QString msg = sel.size() == 1
         ? QString("Удалить «%1» из плейлиста?").arg(sel.first()->text())
         : QString("Удалить %1 треков из плейлиста?").arg(sel.size());
-    if (QMessageBox::question(this, "Удалить треки", msg,
+    if (m_cfg.confirmDelete &&
+        QMessageBox::question(this, "Удалить треки", msg,
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
         return;
     for (QListWidgetItem *item : sel) {
@@ -1879,13 +1959,16 @@ void MainWindow::openStreamUrl(const QString &link) {
     const int index = insertStreamPlaceholder(url);
     const bool shouldAutoplay = (m_playlist.size() == 1);
     m_streamResolving.insert(url);
+    showLoadingBanner("Получение трека: " + trackDisplayTitle(url) + " …");
     downloadStreamTrack(url, [this, url, index, shouldAutoplay]
             (bool ok, QString localPath, QString title, QString artist, QString thumb, QString errorMsg) {
         m_streamResolving.remove(url);
         updateStreamPlaceholder(url, ok, localPath, title, artist, thumb, errorMsg);
-        if (shouldAutoplay) {
-            if (ok) playTrack(index);
-            else    statusBar()->showMessage("Не удалось получить трек: " + errorMsg, 8000);
+        if (shouldAutoplay && ok) {
+            playTrack(index);   // playTrack сам обновит баннер на этап воспроизведения
+        } else {
+            hideLoadingBanner();
+            if (shouldAutoplay) statusBar()->showMessage("Не удалось получить трек: " + errorMsg, 8000);
         }
     });
 }
@@ -2049,7 +2132,10 @@ void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
     // берём куки из браузера пользователя, если это настроено
     if (!m_cfg.ytDlpCookiesBrowser.isEmpty())
         args << "--cookies-from-browser" << m_cfg.ytDlpCookiesBrowser;
-    args << "-f" << "bestaudio/best" << "--print-json" << "-o" << outTemplate << pageUrl.toString();
+    QString format = "bestaudio/best";
+    if (m_cfg.streamAudioQuality == "medium") format = "bestaudio[abr<=128]/bestaudio/best";
+    else if (m_cfg.streamAudioQuality == "low") format = "bestaudio[abr<=64]/bestaudio/best";
+    args << "-f" << format << "--print-json" << "-o" << outTemplate << pageUrl.toString();
 
     connect(proc, &QProcess::errorOccurred, this,
         [this, proc, callback](QProcess::ProcessError err) {
@@ -2135,17 +2221,18 @@ void MainWindow::beginStreamPlayback(int index, const QUrl &pageUrl) {
     if (m_streamResolving.contains(pageUrl)) return;
     m_streamResolving.insert(pageUrl);
 
-    statusBar()->showMessage("Загрузка трека: " + trackDisplayTitle(pageUrl) + " …");
+    showLoadingBanner("Загрузка трека: " + trackDisplayTitle(pageUrl) + " …");
     downloadStreamTrack(pageUrl, [this, index, pageUrl]
             (bool ok, QString localPath, QString title, QString artist, QString thumb, QString errorMsg) {
         m_streamResolving.remove(pageUrl);
         updateStreamPlaceholder(pageUrl, ok, localPath, title, artist, thumb, errorMsg);
         if (!ok) {
+            hideLoadingBanner();
             statusBar()->showMessage("Не удалось скачать трек: " + errorMsg, 8000);
             return;
         }
         // Пользователь мог переключиться на другой трек, пока шло скачивание
-        if (m_currentIndex != index || m_playlist.value(index) != pageUrl) return;
+        if (m_currentIndex != index || m_playlist.value(index) != pageUrl) { hideLoadingBanner(); return; }
         commitStreamPlayback(index, pageUrl, QUrl::fromLocalFile(localPath));
     });
 }
@@ -2153,6 +2240,7 @@ void MainWindow::beginStreamPlayback(int index, const QUrl &pageUrl) {
 void MainWindow::commitStreamPlayback(int index, const QUrl &pageUrl, const QUrl &mediaSource) {
     Q_UNUSED(index);
 
+    hideLoadingBanner();
     m_player->setSource(mediaSource);
     m_player->play();
     applyVolume();
@@ -2617,6 +2705,84 @@ void MainWindow::fadeInWidget(QWidget *w, int durationMs) {
     anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
+void MainWindow::fadeOutWidget(QWidget *w, int durationMs) {
+    if (!w || !w->isVisible()) return;
+    auto *effect = new QGraphicsOpacityEffect(w);
+    w->setGraphicsEffect(effect);
+    auto *anim = new QPropertyAnimation(effect, "opacity", w);
+    anim->setDuration(durationMs);
+    anim->setStartValue(1.0);
+    anim->setEndValue(0.0);
+    anim->setEasingCurve(QEasingCurve::InCubic);
+    connect(anim, &QPropertyAnimation::finished, w, [w]{
+        w->setGraphicsEffect(nullptr);
+        w->setVisible(false);
+    });
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void MainWindow::showLoadingBanner(const QString &text) {
+    m_loadingText->setText(text);
+    m_loadingBar->setRange(0, 0);
+    // Отменяем незавершённый fade (в т.ч. fade-out от предыдущего hide) —
+    // иначе его finished-колбэк потом спрячет баннер, который мы только что показали
+    if (m_loadingAnim) { m_loadingAnim->stop(); m_loadingAnim = nullptr; }
+    if (m_loadingBanner->isVisible()) return;   // уже видим — просто обновили текст выше
+
+    m_loadingBanner->setVisible(true);
+    auto *effect = new QGraphicsOpacityEffect(m_loadingBanner);
+    m_loadingBanner->setGraphicsEffect(effect);
+    auto *anim = new QPropertyAnimation(effect, "opacity", m_loadingBanner);
+    anim->setDuration(220);
+    anim->setStartValue(0.0);
+    anim->setEndValue(1.0);
+    anim->setEasingCurve(QEasingCurve::OutCubic);
+    m_loadingAnim = anim;
+    connect(anim, &QPropertyAnimation::finished, this, [this, anim]{
+        if (m_loadingAnim == anim) {
+            m_loadingBanner->setGraphicsEffect(nullptr);
+            m_loadingAnim = nullptr;
+        }
+    });
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void MainWindow::updateLoadingText(const QString &text) {
+    if (m_loadingBanner->isVisible()) m_loadingText->setText(text);
+}
+
+void MainWindow::setLoadingProgress(int percent) {
+    if (!m_loadingBanner->isVisible()) return;
+    if (percent < 0) {
+        m_loadingBar->setRange(0, 0);
+    } else {
+        m_loadingBar->setRange(0, 100);
+        m_loadingBar->setValue(qBound(0, percent, 100));
+    }
+}
+
+void MainWindow::hideLoadingBanner() {
+    if (!m_loadingBanner->isVisible()) return;
+    if (m_loadingAnim) { m_loadingAnim->stop(); m_loadingAnim = nullptr; }
+
+    auto *effect = new QGraphicsOpacityEffect(m_loadingBanner);
+    m_loadingBanner->setGraphicsEffect(effect);
+    auto *anim = new QPropertyAnimation(effect, "opacity", m_loadingBanner);
+    anim->setDuration(220);
+    anim->setStartValue(1.0);
+    anim->setEndValue(0.0);
+    anim->setEasingCurve(QEasingCurve::InCubic);
+    m_loadingAnim = anim;
+    connect(anim, &QPropertyAnimation::finished, this, [this, anim]{
+        if (m_loadingAnim == anim) {
+            m_loadingBanner->setGraphicsEffect(nullptr);
+            m_loadingBanner->setVisible(false);
+            m_loadingAnim = nullptr;
+        }
+    });
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
 void MainWindow::popButtonIcon(QToolButton *btn) {
     if (!btn) return;
     const QSize normal = btn->iconSize();
@@ -2715,9 +2881,9 @@ void MainWindow::showAbout() {
         "<tr><td><b>Пробел</b></td><td>Играть / Пауза</td></tr>"
         "<tr><td><b>M</b></td><td>Выкл. / вкл. звук</td></tr>"
         "<tr><td><b>Ctrl+←/→</b></td><td>Предыдущий / Следующий</td></tr>"
-        "<tr><td><b>←/→</b></td><td>Перемотка ±5 сек</td></tr>"
-        "<tr><td><b>Shift+←/→</b></td><td>Перемотка ±30 сек</td></tr>"
-        "<tr><td><b>↑/↓</b></td><td>Громкость ±5%</td></tr>"
+        "<tr><td><b>←/→</b></td><td>Перемотка (шаг — в настройках)</td></tr>"
+        "<tr><td><b>Shift+←/→</b></td><td>Перемотка ×6</td></tr>"
+        "<tr><td><b>↑/↓</b></td><td>Громкость (шаг — в настройках)</td></tr>"
         "<tr><td><b>Del</b></td><td>Удалить из плейлиста</td></tr>"
         "<tr><td><b>Ctrl+F</b></td><td>Фокус на поиск</td></tr>"
         "<tr><td><b>Ctrl+U</b></td><td>Открыть по ссылке</td></tr>"
@@ -2831,19 +2997,23 @@ void MainWindow::checkForUpdates(bool manual) {
 }
 
 void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString &tag) {
-    statusBar()->showMessage("Скачивание обновления " + tag + "…");
+    showLoadingBanner("Скачивание обновления " + tag + "…");
+    setLoadingProgress(0);
 
     QNetworkReply *reply = m_streamArtNam->get(QNetworkRequest(QUrl(assetUrl)));
     connect(reply, &QNetworkReply::downloadProgress, this,
-        [this](qint64 received, qint64 total) {
-            if (total > 0)
-                statusBar()->showMessage(
-                    QString("Скачивание обновления… %1%").arg(int(received * 100 / total)));
+        [this, tag](qint64 received, qint64 total) {
+            if (total > 0) {
+                const int pct = int(received * 100 / total);
+                setLoadingProgress(pct);
+                updateLoadingText(QString("Скачивание обновления %1… %2%").arg(tag).arg(pct));
+            }
         });
 
     connect(reply, &QNetworkReply::finished, this, [this, reply, tag]{
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
+            hideLoadingBanner();
             statusBar()->showMessage("Не удалось скачать обновление", 6000);
             return;
         }
@@ -2858,11 +3028,15 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
 
         QFile zf(zipPath);
         if (!zf.open(QIODevice::WriteOnly) || zf.write(data) < 0) {
+            hideLoadingBanner();
             statusBar()->showMessage("Не удалось сохранить файл обновления", 6000);
             return;
         }
         zf.close();
         QDir().mkpath(extractDir);
+
+        updateLoadingText("Распаковка обновления " + tag + "…");
+        setLoadingProgress(-1);
 
         // Распаковка через PowerShell (есть на любой Windows 10/11 из коробки)
         QProcess extractProc;
@@ -2873,6 +3047,7 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
         });
         extractProc.waitForFinished(60000);
         if (extractProc.exitCode() != 0) {
+            hideLoadingBanner();
             statusBar()->showMessage("Не удалось распаковать обновление", 6000);
             return;
         }
@@ -2883,6 +3058,7 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
 
         QFile script(scriptPath);
         if (!script.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            hideLoadingBanner();
             statusBar()->showMessage("Не удалось подготовить установку обновления", 6000);
             return;
         }
@@ -2957,18 +3133,22 @@ void MainWindow::keyPressEvent(QKeyEvent *e) {
     case Qt::Key_S:     stop();            break;
     case Qt::Key_M:     toggleMute();      break;
     case Qt::Key_F11:   toggleMiniPlayer(); break;
-    case Qt::Key_Left:
+    case Qt::Key_Left: {
+        const int stepMs = m_cfg.seekStepSecs * 1000;
         if (ctrl)  previous();
-        else       m_player->setPosition(m_player->position() - (shift ? 30000 : 5000));
+        else       m_player->setPosition(m_player->position() - (shift ? stepMs * 6 : stepMs));
         break;
-    case Qt::Key_Right:
+    }
+    case Qt::Key_Right: {
+        const int stepMs = m_cfg.seekStepSecs * 1000;
         if (ctrl)  next();
-        else       m_player->setPosition(m_player->position() + (shift ? 30000 : 5000));
+        else       m_player->setPosition(m_player->position() + (shift ? stepMs * 6 : stepMs));
         break;
+    }
     case Qt::Key_Up:
-        m_volumeSlider->setValue(qMin(m_volumeSlider->value() + 5, 100)); break;
+        m_volumeSlider->setValue(qMin(m_volumeSlider->value() + m_cfg.volumeStep, 100)); break;
     case Qt::Key_Down:
-        m_volumeSlider->setValue(qMax(m_volumeSlider->value() - 5, 0));   break;
+        m_volumeSlider->setValue(qMax(m_volumeSlider->value() - m_cfg.volumeStep, 0));   break;
     case Qt::Key_Delete:
         removeSelectedTracks(); break;
     case Qt::Key_F:
@@ -3092,7 +3272,8 @@ void MainWindow::deletePlaylist(int index) {
         msg += QString("\n%1 трек%2 будут потеряны.").arg(trackCount)
                .arg(trackCount == 1 ? "" : trackCount < 5 ? "а" : "ов");
 
-    if (QMessageBox::question(this, "Удалить плейлист", msg,
+    if (m_cfg.confirmDelete &&
+        QMessageBox::question(this, "Удалить плейлист", msg,
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
         return;
 
@@ -3404,6 +3585,10 @@ void MainWindow::openSettings() {
         applyTheme();
         applyIconsIfNeeded(prev);
         if (!m_cfg.discordEnabled && m_discord) m_discord->clearActivity();
+        // Сравниваем с состоянием реестра на момент ДО открытия диалога —
+        // prev тут уже испорчен предыдущими live-apply-сигналами и не годится
+        if (m_cfg.launchOnStartup != savedCfg.launchOnStartup)
+            setLaunchOnStartup(m_cfg.launchOnStartup);
         saveSettings();
         statusBar()->showMessage("Настройки сохранены", 2000);
     } else {

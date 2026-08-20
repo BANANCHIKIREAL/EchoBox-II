@@ -25,6 +25,10 @@
 #include <QPropertyAnimation>
 #include <QGraphicsOpacityEffect>
 #include <QEasingCurve>
+#include <QTimer>
+#include <QDir>
+#include <QDirIterator>
+#include <QMessageBox>
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -385,6 +389,39 @@ void SettingsDialog::buildPlayerTab(QWidget *tab) {
     l->addWidget(m_vizChk);
     m_liveWidgets << m_vizChk;
 
+    l->addWidget(makeSep());
+
+    l->addWidget(makeHead("Управление",
+        "Шаг перемотки клавишами ←/→ (Shift+←/→ — всегда в 6 раз больше)\n"
+        "и шаг изменения громкости клавишами ↑/↓."));
+
+    auto *ctrlForm = new QFormLayout;
+    ctrlForm->setSpacing(8);
+    m_seekStepCombo = new QComboBox;
+    m_seekStepCombo->addItem("5 секунд",  5);
+    m_seekStepCombo->addItem("10 секунд", 10);
+    m_seekStepCombo->addItem("15 секунд", 15);
+    m_seekStepCombo->addItem("30 секунд", 30);
+    for (int i = 0; i < m_seekStepCombo->count(); ++i)
+        if (m_seekStepCombo->itemData(i).toInt() == m_result.seekStepSecs)
+            { m_seekStepCombo->setCurrentIndex(i); break; }
+    m_seekStepCombo->setMaximumWidth(160);
+    ctrlForm->addRow("Шаг перемотки:", m_seekStepCombo);
+    m_liveWidgets << m_seekStepCombo;
+
+    m_volumeStepCombo = new QComboBox;
+    m_volumeStepCombo->addItem("1%",  1);
+    m_volumeStepCombo->addItem("5%",  5);
+    m_volumeStepCombo->addItem("10%", 10);
+    for (int i = 0; i < m_volumeStepCombo->count(); ++i)
+        if (m_volumeStepCombo->itemData(i).toInt() == m_result.volumeStep)
+            { m_volumeStepCombo->setCurrentIndex(i); break; }
+    m_volumeStepCombo->setMaximumWidth(160);
+    ctrlForm->addRow("Шаг громкости:", m_volumeStepCombo);
+    m_liveWidgets << m_volumeStepCombo;
+
+    l->addLayout(ctrlForm);
+
     l->addStretch();
 }
 
@@ -430,6 +467,25 @@ void SettingsDialog::buildFilesTab(QWidget *tab) {
     note->setWordWrap(true);
     l->addWidget(note);
 
+    l->addWidget(makeSep());
+
+    l->addWidget(makeHead("Кэш треков по ссылке",
+        "Треки, скачанные по ссылке (SoundCloud, YouTube и т.п.), кэшируются\n"
+        "на диске, чтобы не скачивать их заново при каждом воспроизведении.\n"
+        "Со временем кэш может занять заметное место — здесь его можно очистить."));
+
+    auto *cacheRow = new QHBoxLayout;
+    m_cacheSizeLabel = new QLabel("Подсчёт размера…");
+    m_cacheSizeLabel->setStyleSheet("color:#a6adc8;");
+    auto *clearCacheBtn = new QPushButton("Очистить кэш");
+    clearCacheBtn->setFixedHeight(28);
+    connect(clearCacheBtn, &QPushButton::clicked, this, &SettingsDialog::clearStreamCache);
+    cacheRow->addWidget(m_cacheSizeLabel);
+    cacheRow->addStretch();
+    cacheRow->addWidget(clearCacheBtn);
+    l->addLayout(cacheRow);
+    QTimer::singleShot(0, this, &SettingsDialog::refreshCacheSize);
+
     l->addStretch();
 }
 
@@ -446,6 +502,11 @@ void SettingsDialog::buildInterfaceTab(QWidget *tab) {
     l->addWidget(m_iconsChk);
     m_liveWidgets << m_iconsChk;
 
+    m_confirmDeleteChk = new QCheckBox("Спрашивать подтверждение при удалении треков/плейлиста");
+    m_confirmDeleteChk->setChecked(m_result.confirmDelete);
+    l->addWidget(m_confirmDeleteChk);
+    m_liveWidgets << m_confirmDeleteChk;
+
     l->addWidget(makeSep());
 
     l->addWidget(makeHead("Окно",
@@ -460,6 +521,32 @@ void SettingsDialog::buildInterfaceTab(QWidget *tab) {
     m_trayChk->setChecked(m_result.closeToTray);
     l->addWidget(m_trayChk);
     m_liveWidgets << m_trayChk;
+
+    l->addWidget(makeSep());
+
+    l->addWidget(makeHead("Запуск",
+        "Поведение приложения при старте вместе с Windows."));
+
+    m_launchOnStartupChk = new QCheckBox("Запускать вместе с Windows");
+    m_launchOnStartupChk->setChecked(m_result.launchOnStartup);
+    l->addWidget(m_launchOnStartupChk);
+    m_liveWidgets << m_launchOnStartupChk;
+
+    m_startMinimizedChk = new QCheckBox("Запускать свёрнутым в трей (без окна)");
+    m_startMinimizedChk->setChecked(m_result.startMinimized);
+    l->addWidget(m_startMinimizedChk);
+    m_liveWidgets << m_startMinimizedChk;
+
+    l->addWidget(makeSep());
+
+    l->addWidget(makeHead("Обновления",
+        "Тихая проверка новой версии в фоне при запуске приложения.\n"
+        "Вручную можно проверить в любой момент: Справка → Проверить обновления."));
+
+    m_autoUpdatesChk = new QCheckBox("Проверять обновления при запуске");
+    m_autoUpdatesChk->setChecked(m_result.autoCheckUpdates);
+    l->addWidget(m_autoUpdatesChk);
+    m_liveWidgets << m_autoUpdatesChk;
 
     l->addStretch();
 }
@@ -499,6 +586,25 @@ void SettingsDialog::buildIntegrationsTab(QWidget *tab) {
     }
     l->addWidget(m_cookiesBrowserCombo);
     m_liveWidgets << m_cookiesBrowserCombo;
+
+    l->addWidget(makeSep());
+
+    l->addWidget(makeHead("Качество аудио по ссылке",
+        "Битрейт, который yt-dlp выбирает при скачивании треков по ссылке.\n"
+        "Выше — лучше звук, но дольше скачивание и больше места на диске.\n"
+        "Ниже — быстрее и компактнее, полезно на медленном интернете."));
+
+    m_audioQualityCombo = new QComboBox();
+    m_audioQualityCombo->addItem("Лучшее",              "best");
+    m_audioQualityCombo->addItem("Среднее (до 128kbps)", "medium");
+    m_audioQualityCombo->addItem("Экономия трафика (до 64kbps)", "low");
+    {
+        const int idx = m_audioQualityCombo->findData(m_result.streamAudioQuality);
+        m_audioQualityCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+    }
+    m_audioQualityCombo->setMaximumWidth(260);
+    l->addWidget(m_audioQualityCombo);
+    m_liveWidgets << m_audioQualityCombo;
 
     l->addStretch();
 }
@@ -611,6 +717,8 @@ void SettingsDialog::collectResult() {
     m_result.autoPlay       = m_autoPlayChk->isChecked();
     m_result.showVisualizer = m_vizChk->isChecked();
     m_result.crossfadeSecs  = m_crossfadeCombo->currentData().toInt();
+    m_result.seekStepSecs   = m_seekStepCombo->currentData().toInt();
+    m_result.volumeStep     = m_volumeStepCombo->currentData().toInt();
 
     m_result.libraryFolder   = m_libraryEdit->text().trimmed();
     m_result.playlistsFolder = m_playlistsEdit->text().trimmed();
@@ -619,7 +727,40 @@ void SettingsDialog::collectResult() {
     m_result.showTrackIcons = m_iconsChk->isChecked();
     m_result.showStatusBar  = m_statusBarChk->isChecked();
     m_result.closeToTray    = m_trayChk->isChecked();
+    m_result.confirmDelete  = m_confirmDeleteChk->isChecked();
+
+    m_result.launchOnStartup  = m_launchOnStartupChk->isChecked();
+    m_result.startMinimized   = m_startMinimizedChk->isChecked();
+    m_result.autoCheckUpdates = m_autoUpdatesChk->isChecked();
 
     m_result.discordEnabled = m_discordChk->isChecked();
-    m_result.ytDlpCookiesBrowser = m_cookiesBrowserCombo->currentData().toString();
+    m_result.ytDlpCookiesBrowser  = m_cookiesBrowserCombo->currentData().toString();
+    m_result.streamAudioQuality   = m_audioQualityCombo->currentData().toString();
+}
+
+void SettingsDialog::refreshCacheSize() {
+    if (!m_cacheSizeLabel) return;
+    const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                            + "/streamcache";
+    qint64 total = 0;
+    QDirIterator it(cacheDir, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) { it.next(); total += it.fileInfo().size(); }
+
+    QString sizeStr;
+    if (total < 1024 * 1024) sizeStr = QString::number(total / 1024.0, 'f', 1) + " КБ";
+    else                     sizeStr = QString::number(total / 1024.0 / 1024.0, 'f', 1) + " МБ";
+    m_cacheSizeLabel->setText(total > 0 ? ("Занято: " + sizeStr) : "Кэш пуст");
+}
+
+void SettingsDialog::clearStreamCache() {
+    const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                            + "/streamcache";
+    if (QMessageBox::question(this, "Очистить кэш",
+            "Удалить все скачанные по ссылке треки из кэша?\n"
+            "При следующем воспроизведении они скачаются заново.",
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+        return;
+    QDir(cacheDir).removeRecursively();
+    QDir().mkpath(cacheDir);
+    refreshCacheSize();
 }

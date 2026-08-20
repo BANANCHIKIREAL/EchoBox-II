@@ -10,7 +10,7 @@ int main(int argc, char *argv[]) {
     app.setWindowIcon(QIcon(createLogo(256)));
 
     MainWindow w;
-    w.show();
+    if (!w.startsMinimized()) w.show();
 
     return app.exec();
 }

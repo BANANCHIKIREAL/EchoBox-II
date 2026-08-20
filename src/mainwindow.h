@@ -32,6 +32,8 @@
 #endif
 
 class QLabel;
+class QProgressBar;
+class QPropertyAnimation;
 class QToolButton;
 class QListWidget;
 class QListWidgetItem;
@@ -77,6 +79,7 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
+    bool startsMinimized() const;   // читается из main.cpp перед show()
 
 protected:
     void dragEnterEvent(QDragEnterEvent *) override;
@@ -202,8 +205,15 @@ private:
 
     // Плавные переходы — общие хелперы, переиспользуются по всему UI
     void fadeInWidget(QWidget *w, int durationMs = 260);
+    void fadeOutWidget(QWidget *w, int durationMs = 220);
     void popButtonIcon(QToolButton *btn);
     void animateTrackHighlight(const QUrl &url);
+
+    // Баннер загрузки (вместо голого текста в строке состояния)
+    void showLoadingBanner(const QString &text);
+    void updateLoadingText(const QString &text);
+    void setLoadingProgress(int percent);   // -1 = неопределённый (busy-анимация)
+    void hideLoadingBanner();
     void addRecentFile(const QString &path);
     void refreshRecentMenu();
     bool isVideoFile(const QUrl &url) const;
@@ -257,6 +267,12 @@ private:
     QLabel  *m_titleLabel  = nullptr;
     QLabel  *m_artistLabel = nullptr;
     QLabel  *m_albumLabel  = nullptr;
+
+    // ── Индикатор загрузки (скачивание трека по ссылке / обновления) ─────────
+    QWidget     *m_loadingBanner = nullptr;
+    QProgressBar *m_loadingBar   = nullptr;
+    QLabel      *m_loadingText   = nullptr;
+    QPropertyAnimation *m_loadingAnim = nullptr;   // текущий fade-in/out баннера (для отмены гонок)
 
     // ── Visualizer ───────────────────────────────────────────────────────────
     Visualizer *m_visualizer  = nullptr;
