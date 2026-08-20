@@ -12,6 +12,8 @@
 #include <QApplication>
 #include <QScreen>
 #include <QPropertyAnimation>
+#include <QVariantAnimation>
+#include <QGraphicsOpacityEffect>
 #include <QEasingCurve>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -84,7 +86,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "1.5.5";
+static const QString kAppVersion = "1.5.6";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -1517,6 +1519,9 @@ void MainWindow::clearPlaylist() {
     updatePlaylistInfo();
     m_coverPixmap = QPixmap();
     updateAlbumArt();
+    fadeInWidget(m_albumArt, 300);
+    fadeInWidget(m_titleLabel, 280);
+    fadeInWidget(m_artistLabel, 280);
     statusBar()->showMessage("Плейлист очищен");
 }
 
@@ -1739,6 +1744,9 @@ void MainWindow::playTrack(int index) {
     m_artistLabel->setText(artist);
     m_albumLabel->setText("");
     setWindowTitle("EchoBox II  —  " + mini);
+    fadeInWidget(m_titleLabel, 280);
+    fadeInWidget(m_artistLabel, 280);
+    fadeInWidget(m_miniTitle, 280);
 
     if (!url.isLocalFile()) {
         // Ссылка на музыку (SoundCloud/YouTube/др.) — сначала получить
@@ -1749,6 +1757,7 @@ void MainWindow::playTrack(int index) {
         m_coverPixmap = QFile::exists(icoFile) ? QPixmap(icoFile) : QPixmap();
         m_mediaStack->setCurrentWidget(m_albumArt);
         updateAlbumArt();
+        fadeInWidget(m_albumArt, 320);
         beginStreamPlayback(index, url);
         return;
     }
@@ -1767,6 +1776,7 @@ void MainWindow::playTrack(int index) {
         m_coverPixmap = QFile::exists(icoFile) ? QPixmap(icoFile) : QPixmap();
         m_mediaStack->setCurrentWidget(m_albumArt);
         updateAlbumArt();
+        fadeInWidget(m_albumArt, 320);
     }
 
     addRecentFile(url.toLocalFile());
@@ -1958,6 +1968,9 @@ void MainWindow::updateStreamPlaceholder(const QUrl &pageUrl, bool ok, const QSt
         m_miniTitle->setText(label);
         m_artistLabel->setText(artist);
         setWindowTitle("EchoBox II  —  " + label);
+        fadeInWidget(m_titleLabel, 280);
+        fadeInWidget(m_artistLabel, 280);
+        fadeInWidget(m_miniTitle, 280);
     }
 
     updateDuplicateHighlights();
@@ -1979,6 +1992,7 @@ void MainWindow::fetchStreamThumbnail(const QUrl &pageUrl, const QString &thumbn
         if (idx == m_currentIndex) {
             m_coverPixmap = QPixmap(icoFile);
             updateAlbumArt();
+            fadeInWidget(m_albumArt, 320);
         }
         return;
     }
@@ -2009,6 +2023,7 @@ void MainWindow::fetchStreamThumbnail(const QUrl &pageUrl, const QString &thumbn
         if (idx == m_currentIndex) {
             m_coverPixmap = large;
             updateAlbumArt();
+            fadeInWidget(m_albumArt, 320);
         }
     });
 }
@@ -2244,6 +2259,8 @@ void MainWindow::toggleMute() {
     } else {
         m_volumeSlider->setValue(m_lastVolume);
     }
+    popButtonIcon(m_muteBtn);
+    if (m_miniMuteBtn) popButtonIcon(m_miniMuteBtn);
 }
 
 void MainWindow::onSpeedChanged(int index) {
@@ -2260,6 +2277,8 @@ void MainWindow::toggleShuffle() {
     if (m_miniShuffleBtn) { m_miniShuffleBtn->setChecked(m_shuffle); m_miniShuffleBtn->setIcon(Ico::shuffle(c, 15)); }
     if (m_shuffleAct) m_shuffleAct->setChecked(m_shuffle);
     statusBar()->showMessage(m_shuffle ? "Перемешивание включено" : "Перемешивание выключено", 2000);
+    popButtonIcon(m_shuffleBtn);
+    if (m_miniShuffleBtn) popButtonIcon(m_miniShuffleBtn);
 }
 
 void MainWindow::cycleRepeat() {
@@ -2297,6 +2316,8 @@ void MainWindow::updateRepeatButton() {
         if (m_repeatOneAct) m_repeatOneAct->setChecked(true);
         break;
     }
+    popButtonIcon(m_repeatBtn);
+    if (m_miniRepeatBtn) popButtonIcon(m_miniRepeatBtn);
 }
 
 void MainWindow::toggleMiniPlayer() {
@@ -2329,6 +2350,11 @@ void MainWindow::toggleMiniPlayer() {
     // после него обязательно вызываем show().
     setWindowFlag(Qt::FramelessWindowHint, m_miniPlayer);
     show();
+
+    // Плавно проявляем ту панель, что стала видимой (смена флага окна
+    // выше уже пересоздала нативное окно, но дочерние виджеты — те же)
+    if (m_miniPlayer) fadeInWidget(m_miniBar, 300);
+    else { fadeInWidget(m_topWidget, 300); fadeInWidget(m_playlistPanel, 300); }
 
     if (m_miniPlayerAct) m_miniPlayerAct->setChecked(m_miniPlayer);
 }
@@ -2432,6 +2458,8 @@ void MainWindow::onPlaybackStateChanged(QMediaPlayer::PlaybackState state) {
     const QColor iconC = ac.lightness() > 160 ? QColor(0x1e,0x1e,0x2e) : QColor(0xff,0xff,0xff);
     m_playPauseBtn->setIcon(playing ? Ico::pause(iconC, 30) : Ico::play(iconC, 30));
     m_miniPlayBtn->setIcon(playing  ? Ico::pause(iconC, 22) : Ico::play(iconC, 22));
+    popButtonIcon(m_playPauseBtn);
+    popButtonIcon(m_miniPlayBtn);
     m_visualizer->setActive(playing);
     if (m_trayPlayAct) m_trayPlayAct->setText(playing ? "⏸  Пауза" : "▶  Играть");
     if (m_discord && m_cfg.discordEnabled)
@@ -2572,6 +2600,51 @@ int MainWindow::artRadius() const {
     return 12; // rounded (default)
 }
 
+// ─── Плавные переходы — общие хелперы ────────────────────────────────────────
+
+void MainWindow::fadeInWidget(QWidget *w, int durationMs) {
+    if (!w) return;
+    auto *effect = new QGraphicsOpacityEffect(w);
+    w->setGraphicsEffect(effect);
+    auto *anim = new QPropertyAnimation(effect, "opacity", w);
+    anim->setDuration(durationMs);
+    anim->setStartValue(0.0);
+    anim->setEndValue(1.0);
+    anim->setEasingCurve(QEasingCurve::OutCubic);
+    // Снимаем эффект по завершении — постоянный QGraphicsOpacityEffect
+    // заставляет Qt рендерить весь поддерево программно каждый кадр
+    connect(anim, &QPropertyAnimation::finished, w, [w]{ w->setGraphicsEffect(nullptr); });
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void MainWindow::popButtonIcon(QToolButton *btn) {
+    if (!btn) return;
+    const QSize normal = btn->iconSize();
+    auto *anim = new QPropertyAnimation(btn, "iconSize", btn);
+    anim->setDuration(240);
+    anim->setStartValue(normal * 0.7);
+    anim->setEndValue(normal);
+    anim->setEasingCurve(QEasingCurve::OutBack);
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void MainWindow::animateTrackHighlight(const QUrl &url) {
+    auto *anim = new QVariantAnimation(this);
+    anim->setDuration(320);
+    anim->setStartValue(QColor(0xcd, 0xd6, 0xf4));
+    anim->setEndValue(QColor(0xcb, 0xa6, 0xf7));
+    anim->setEasingCurve(QEasingCurve::OutCubic);
+    // Ищем элемент заново на каждый тик (а не храним QListWidgetItem*) —
+    // плейлист мог измениться, пока анимация ещё бежит
+    connect(anim, &QVariantAnimation::valueChanged, this, [this, url](const QVariant &v) {
+        const int idx = m_playlist.indexOf(url);
+        if (idx < 0) return;
+        QListWidgetItem *it = m_playlistWidget->item(idx);
+        if (it) it->setForeground(v.value<QColor>());
+    });
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
 void MainWindow::updateAlbumArt() {
     const int r = artRadius();
     if (!m_coverPixmap.isNull()) {
@@ -2598,14 +2671,12 @@ void MainWindow::updateAlbumArt() {
 void MainWindow::setCurrentTrackVisual(int index) {
     for (int i = 0; i < m_playlistWidget->count(); ++i) {
         QListWidgetItem *it = m_playlistWidget->item(i);
-        if (i == index) {
-            QFont f = it->font(); f.setBold(true); it->setFont(f);
-            it->setForeground(QColor(0xcb, 0xa6, 0xf7));
-        } else {
-            QFont f = it->font(); f.setBold(false); it->setFont(f);
-            it->setForeground(QColor(0xcd, 0xd6, 0xf4));
-        }
+        QFont f = it->font(); f.setBold(i == index); it->setFont(f);
+        if (i != index) it->setForeground(QColor(0xcd, 0xd6, 0xf4));
     }
+    // Плавный переход цвета — только для новой активной строки
+    if (index >= 0 && index < m_playlist.size())
+        animateTrackHighlight(m_playlist[index]);
     m_playlistWidget->scrollToItem(m_playlistWidget->item(index));
 }
 

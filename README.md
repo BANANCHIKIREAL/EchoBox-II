@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white"/>
   <img src="https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white"/>
   <img src="https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-red?style=for-the-badge"/>
-  <img src="https://img.shields.io/badge/version-1.5.5-blue?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/version-1.5.6-blue?style=for-the-badge"/>
 </p>
 
 <p align="center">
@@ -185,6 +185,15 @@ EchoBox-II/
 ---
 
 ## История версий
+
+### ✨ v1.5.6
+> 20 августа 2026
+
+**Новые функции**
+- Плавные анимации по всему приложению: смена трека (кроссфейд обложки и названия/исполнителя), подсветка активного трека в плейлисте, «пружинистые» иконки кнопок play/pause, mute, shuffle, повтор, переход в мини-плеер и обратно, сброс плейлиста
+- Настройки: вспышка-подтверждение при выборе цвета акцента (палитра и пресеты) и на кнопках-подсказках «?» во всех разделах
+
+---
 
 ### 🛠 v1.5.5
 > 20 августа 2026
