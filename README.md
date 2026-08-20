@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white"/>
   <img src="https://img.shields.io/badge/Windows-11-0078D4?style=for-the-badge&logo=windows&logoColor=white"/>
   <img src="https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-red?style=for-the-badge"/>
-  <img src="https://img.shields.io/badge/version-1.5.7-blue?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/version-1.5.8-blue?style=for-the-badge"/>
 </p>
 
 <p align="center">
@@ -185,6 +185,17 @@ EchoBox-II/
 ---
 
 ## История версий
+
+### ✨ v1.5.8
+> 20 августа 2026
+
+**Новые функции**
+- Треки в плейлисте теперь можно переместить или скопировать в другой плейлист — правый клик → «Переместить в плейлист» / «Копировать в плейлист»
+
+**Исправления**
+- Поля ввода текста (ссылка на трек, переименование плейлиста, пути в настройках) и выпадающие списки в настройках сливались с фоном в светлой теме Windows — теперь у них всегда явный тёмный фон, независимо от системной темы
+
+---
 
 ### ✨ v1.5.7
 > 20 августа 2026
