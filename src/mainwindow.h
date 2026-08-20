@@ -26,6 +26,7 @@
 #include "waveformslider.h"
 #include "backgroundwidget.h"
 #include "libraryscanner.h"
+#include "audioengine.h"
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
 #include <QAudioBufferOutput>
@@ -243,6 +244,15 @@ private:
     QMediaPlayer   *m_metaReader  = nullptr;  // metadata-only, no audio output
     QList<QUrl>     m_metaScanQueue;
     bool            m_scanInProgress = false;
+
+    // ── Эквалайзер ───────────────────────────────────────────────────────────
+    // "Теневой" движок: QMediaPlayer остаётся единственным источником
+    // истины для позиции/состояния/кроссфейда (см. applyVolume/playerSeek),
+    // просто приглушается, когда AudioEngine активен и реально слышим
+    AudioEngine *m_eqEngine = nullptr;
+    bool         m_eqActive = false;
+    void syncEqEngineToCurrentTrack();
+    void playerSeek(qint64 ms);
 
     // ── State ────────────────────────────────────────────────────────────────
     QList<QUrl>    m_playlist;

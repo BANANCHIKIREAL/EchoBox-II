@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(EchoBoxII VERSION 2.0.2 LANGUAGES CXX)
+project(EchoBoxII VERSION 2.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -48,6 +48,8 @@ qt_add_executable(EchoBoxII
     src/waveformslider.cpp
     src/libraryscanner.h
     src/libraryscanner.cpp
+    src/audioengine.h
+    src/audioengine.cpp
     ${APP_ICON_SOURCES}
 )
 

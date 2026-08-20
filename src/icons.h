@@ -326,4 +326,23 @@ inline QIcon link(QColor c, int sz = 24) {
     return QIcon(pm);
 }
 
+inline QIcon equalizer(QColor c, int sz = 24) {
+    QPixmap pm = makePixmap(sz);
+    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen); p.setBrush(c);
+    // Классические столбики графического эквалайзера — разной высоты,
+    // симметрично вокруг центра
+    const float heights[] = {0.42f, 0.72f, 0.30f, 0.60f, 0.46f};
+    const float barW = sz * 0.12f;
+    const float gap  = sz * 0.09f;
+    const float totalW = 5 * barW + 4 * gap;
+    float x = (sz - totalW) / 2.0f;
+    for (float h : heights) {
+        const float barH = sz * h;
+        p.drawRoundedRect(QRectF(x, sz - barH - sz*0.08f, barW, barH), barW*0.4f, barW*0.4f);
+        x += barW + gap;
+    }
+    return QIcon(pm);
+}
+
 } // namespace Ico

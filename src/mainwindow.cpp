@@ -88,7 +88,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "2.0.2";
+static const QString kAppVersion = "2.1.0";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -225,6 +225,13 @@ MainWindow::MainWindow(QWidget *parent)
     m_player      = new QMediaPlayer(this);
     m_audioOutput = new QAudioOutput(this);
     m_player->setAudioOutput(m_audioOutput);
+
+    m_eqEngine = new AudioEngine(this);
+    connect(m_eqEngine, &AudioEngine::decodeError, this, [this](const QString &msg){
+        m_eqActive = false;
+        applyVolume();
+        statusBar()->showMessage("Эквалайзер недоступен для этого трека: " + msg, 5000);
+    });
 
     // Metadata-only reader — no audio output, used for background icon scanning
     m_metaReader = new QMediaPlayer(this);
@@ -853,7 +860,7 @@ void MainWindow::setupConnections() {
 
     connect(m_seekSlider, &WaveformSlider::sliderPressed,  [this]{ m_seeking = true; });
     connect(m_seekSlider, &WaveformSlider::sliderReleased, [this]{
-        m_player->setPosition(m_seekSlider->value());
+        playerSeek(m_seekSlider->value());
         m_seeking = false;
     });
     // Share peaks and keep mini waveform in sync
@@ -861,7 +868,7 @@ void MainWindow::setupConnections() {
     connect(m_seekSlider, &WaveformSlider::peaksReady, this, &MainWindow::onWaveformPeaksReady);
     connect(m_miniWaveform, &WaveformSlider::sliderPressed,  [this]{ m_seeking = true; });
     connect(m_miniWaveform, &WaveformSlider::sliderReleased, [this]{
-        m_player->setPosition(m_miniWaveform->value());
+        playerSeek(m_miniWaveform->value());
         m_seeking = false;
     });
     m_timeLabel->installEventFilter(this);
@@ -1093,6 +1100,22 @@ void MainWindow::applyTheme() {
             border: none;
         }
         QSlider#volSlider::handle:horizontal:hover { background: #a6e3a1; }
+
+        /* Обычный (безымянный) QSlider — например полосы эквалайзера в
+           настройках — иначе рисуется нативным стилем ОС */
+        QSlider::groove:vertical {
+            width: 4px; background: #313244; border-radius: 2px;
+        }
+        QSlider::sub-page:vertical { background: #45475a; border-radius: 2px; }
+        QSlider::add-page:vertical { background: ACCENT; border-radius: 2px; }
+        QSlider::handle:vertical {
+            background: #cdd6f4;
+            width: 14px; height: 14px;
+            margin: 0 -5px;
+            border-radius: 7px;
+            border: none;
+        }
+        QSlider::handle:vertical:hover { background: ACCENT; }
 
         QListWidget#playlist {
             background-color: #181825;
@@ -1433,10 +1456,17 @@ void MainWindow::loadSettings() {
     m_cfg.confirmDelete    = m_settings.value("cfg/confirmDelete", true).toBool();
     m_cfg.seekStepSecs     = m_settings.value("cfg/seekStepSecs", 5).toInt();
     m_cfg.volumeStep       = m_settings.value("cfg/volumeStep", 5).toInt();
+    m_cfg.eqEnabled        = m_settings.value("cfg/eqEnabled", false).toBool();
+    for (int i = 0; i < kEqBandCount; ++i)
+        m_cfg.eqBands[i] = m_settings.value(QString("cfg/eqBand%1").arg(i), 0.0).toFloat();
     // Автозапуск — единственный источник истины это сам реестр (не дублируем
     // в QSettings), иначе они могут разойтись, если юзер отключит его вручную
     // через диспетчер задач/параметры Windows
     m_cfg.launchOnStartup  = isLaunchOnStartupEnabled();
+
+    m_eqEngine->setEqEnabled(m_cfg.eqEnabled);
+    for (int i = 0; i < kEqBandCount; ++i)
+        m_eqEngine->setEqBandGain(i, m_cfg.eqBands[i]);
 
     if (g_delegate) g_delegate->showIcons = m_cfg.showTrackIcons;
     applyTheme();
@@ -1475,6 +1505,9 @@ void MainWindow::saveSettings() {
     m_settings.setValue("cfg/confirmDelete",       m_cfg.confirmDelete);
     m_settings.setValue("cfg/seekStepSecs",        m_cfg.seekStepSecs);
     m_settings.setValue("cfg/volumeStep",          m_cfg.volumeStep);
+    m_settings.setValue("cfg/eqEnabled",           m_cfg.eqEnabled);
+    for (int i = 0; i < kEqBandCount; ++i)
+        m_settings.setValue(QString("cfg/eqBand%1").arg(i), m_cfg.eqBands[i]);
     // launchOnStartup не хранится в QSettings — источник истины реестр,
     // применяется явно в openSettings() при нажатии "Сохранить"
 
@@ -1625,6 +1658,7 @@ void MainWindow::clearPlaylist() {
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
         return;
     m_player->stop();
+    if (m_eqActive) { m_eqEngine->stop(); m_eqActive = false; }
     m_playlist.clear();
     m_playlistWidget->clear();
     m_currentIndex = -1;
@@ -1945,6 +1979,7 @@ void MainWindow::playTrack(int index) {
 
     m_player->setSource(url);
     m_player->play();
+    syncEqEngineToCurrentTrack();
     applyVolume();
 
     statusBar()->showMessage(url.toLocalFile());
@@ -2345,6 +2380,7 @@ void MainWindow::commitStreamPlayback(int index, const QUrl &pageUrl, const QUrl
     hideLoadingBanner();
     m_player->setSource(mediaSource);
     m_player->play();
+    syncEqEngineToCurrentTrack();
     applyVolume();
 
     const QString name   = trackDisplayTitle(pageUrl);
@@ -2363,14 +2399,20 @@ void MainWindow::commitStreamPlayback(int index, const QUrl &pageUrl, const QUrl
 void MainWindow::togglePlayPause() {
     if (m_player->playbackState() == QMediaPlayer::PlayingState) {
         m_player->pause();
+        if (m_eqActive) m_eqEngine->pause();
     } else if (m_player->playbackState() == QMediaPlayer::PausedState) {
         m_player->play();
+        if (m_eqActive) m_eqEngine->play();
     } else if (!m_playlist.isEmpty()) {
         playTrack(qMax(m_currentIndex, 0));
     }
 }
 
-void MainWindow::stop() { m_player->stop(); popButtonIcon(m_stopBtn); }
+void MainWindow::stop() {
+    m_player->stop();
+    if (m_eqActive) { m_eqEngine->stop(); m_eqActive = false; }
+    popButtonIcon(m_stopBtn);
+}
 
 void MainWindow::previous() {
     popButtonIcon(m_prevBtn);
@@ -2405,8 +2447,9 @@ void MainWindow::playNext(bool respectRepeat) {
     if (m_playlist.isEmpty()) return;
 
     if (respectRepeat && m_repeat == RepeatMode::One) {
-        m_player->setPosition(0);
+        playerSeek(0);
         m_player->play();
+        if (m_eqActive) m_eqEngine->play();
         return;
     }
 
@@ -2423,7 +2466,7 @@ void MainWindow::playNext(bool respectRepeat) {
 
     if (nextIdx >= m_playlist.size()) {
         if (!respectRepeat || m_repeat == RepeatMode::All) nextIdx = 0;
-        else { m_player->stop(); return; }
+        else { m_player->stop(); if (m_eqActive) { m_eqEngine->stop(); m_eqActive = false; } return; }
     }
     playTrack(nextIdx);
 }
@@ -2457,8 +2500,10 @@ void MainWindow::toggleMute() {
 
 void MainWindow::onSpeedChanged(int index) {
     const double speeds[] = {0.5, 0.75, 1.0, 1.25, 1.5, 2.0};
-    if (index >= 0 && index < 6)
+    if (index >= 0 && index < 6) {
         m_player->setPlaybackRate(speeds[index]);
+        m_eqEngine->setPlaybackRate(speeds[index]);
+    }
 }
 
 void MainWindow::toggleShuffle() {
@@ -2672,7 +2717,7 @@ void MainWindow::onMediaStatusChanged(QMediaPlayer::MediaStatus status) {
             if (saved.isValid()) {
                 const qint64 pos = saved.toLongLong();
                 if (pos > 0 && m_player->duration() > 0 && pos < m_player->duration() - 8000) {
-                    m_player->setPosition(pos);
+                    playerSeek(pos);
                     statusBar()->showMessage(
                         QString("Продолжаем с %1").arg(formatTime(pos)), 4000);
                 }
@@ -3051,6 +3096,7 @@ void MainWindow::showAbout() {
         "<li>Discord Rich Presence</li>"
         "<li>Автообновление (Справка → Проверить обновления)</li>"
         "<li>Кроссфейд, память позиции, несколько плейлистов</li>"
+        "<li>8-полосный эквалайзер (Настройки → Эквалайзер)</li>"
         "</ul>"
         "<hr>"
         "<p><b>Горячие клавиши:</b></p>"
@@ -3313,13 +3359,13 @@ void MainWindow::keyPressEvent(QKeyEvent *e) {
     case Qt::Key_Left: {
         const int stepMs = m_cfg.seekStepSecs * 1000;
         if (ctrl)  previous();
-        else       m_player->setPosition(m_player->position() - (shift ? stepMs * 6 : stepMs));
+        else       playerSeek(m_player->position() - (shift ? stepMs * 6 : stepMs));
         break;
     }
     case Qt::Key_Right: {
         const int stepMs = m_cfg.seekStepSecs * 1000;
         if (ctrl)  next();
-        else       m_player->setPosition(m_player->position() + (shift ? stepMs * 6 : stepMs));
+        else       playerSeek(m_player->position() + (shift ? stepMs * 6 : stepMs));
         break;
     }
     case Qt::Key_Up:
@@ -3364,6 +3410,7 @@ void MainWindow::loadPlaylistState(int index) {
     if (index < 0 || index >= m_playlists.size()) return;
 
     m_player->stop();
+    if (m_eqActive) { m_eqEngine->stop(); m_eqActive = false; }
     m_playlist     = m_playlists[index].tracks;
     m_currentIndex = m_playlists[index].currentTrack;
 
@@ -3472,7 +3519,39 @@ void MainWindow::deletePlaylist(int index) {
 // ─── Volume helper ───────────────────────────────────────────────────────────
 
 void MainWindow::applyVolume() {
-    m_audioOutput->setVolume(m_volumeSlider->value() / 100.0f * m_fadeFactor);
+    const float vol = m_volumeSlider->value() / 100.0f * m_fadeFactor;
+    if (m_eqActive) {
+        // Обычный плеер продолжает "играть" неслышно — он всё ещё источник
+        // истины для позиции/длительности/кроссфейда; слышимый звук идёт
+        // из AudioEngine (см. syncEqEngineToCurrentTrack)
+        m_audioOutput->setVolume(0.0f);
+        m_eqEngine->setVolume(vol);
+    } else {
+        m_audioOutput->setVolume(vol);
+    }
+}
+
+void MainWindow::playerSeek(qint64 ms) {
+    m_player->setPosition(ms);
+    if (m_eqActive) m_eqEngine->setPosition(ms);
+}
+
+void MainWindow::syncEqEngineToCurrentTrack() {
+    const QUrl src = m_player->source();
+    const bool wantEq = m_cfg.eqEnabled && !src.isEmpty() &&
+                         src.isLocalFile() && !isVideoFile(src);
+    if (wantEq == m_eqActive) return;
+
+    if (wantEq) {
+        m_eqActive = true;
+        m_eqEngine->setSource(src);
+        m_eqEngine->setPosition(m_player->position());
+        if (m_player->playbackState() == QMediaPlayer::PlayingState) m_eqEngine->play();
+    } else {
+        m_eqEngine->stop();
+        m_eqActive = false;
+    }
+    applyVolume();
 }
 
 // ─── Position memory (Feature 8) ─────────────────────────────────────────────
@@ -3733,11 +3812,19 @@ void MainWindow::loadStreamTracksFromFile() {
 void MainWindow::openSettings() {
     const AppSettings savedCfg = m_cfg;
 
+    auto applyEqSettings = [this]{
+        m_eqEngine->setEqEnabled(m_cfg.eqEnabled);
+        for (int i = 0; i < kEqBandCount; ++i)
+            m_eqEngine->setEqBandGain(i, m_cfg.eqBands[i]);
+        syncEqEngineToCurrentTrack();
+    };
+
     SettingsDialog dlg(m_cfg, this);
-    connect(&dlg, &SettingsDialog::applied, this, [this](const AppSettings &s) {
+    connect(&dlg, &SettingsDialog::applied, this, [this, applyEqSettings](const AppSettings &s) {
         const AppSettings prev = m_cfg;
         m_cfg = s;
         applyTheme();
+        applyEqSettings();
         if (m_cfg.showTrackIcons != prev.showTrackIcons ||
             m_cfg.iconsFolder    != prev.iconsFolder) {
             if (g_delegate) g_delegate->showIcons = m_cfg.showTrackIcons;
@@ -3760,6 +3847,7 @@ void MainWindow::openSettings() {
         const AppSettings prev = m_cfg;
         m_cfg = dlg.result();
         applyTheme();
+        applyEqSettings();
         applyIconsIfNeeded(prev);
         if (!m_cfg.discordEnabled && m_discord) m_discord->clearActivity();
         // Сравниваем с состоянием реестра на момент ДО открытия диалога —
@@ -3769,10 +3857,12 @@ void MainWindow::openSettings() {
         saveSettings();
         statusBar()->showMessage("Настройки сохранены", 2000);
     } else {
-        // Cancel — revert to state before dialog opened
+        // Cancel — revert to state before dialog opened (в т.ч. превью
+        // эквалайзера, которое могло применяться вживую во время диалога)
         const AppSettings prev = liveApplied;
         m_cfg = savedCfg;
         applyTheme();
+        applyEqSettings();
         applyIconsIfNeeded(prev);
     }
 }

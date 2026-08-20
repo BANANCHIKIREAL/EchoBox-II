@@ -2,6 +2,7 @@
 #include <QDialog>
 #include <QColor>
 #include <QLabel>
+#include "audioengine.h"
 
 class QButtonGroup;
 class QCheckBox;
@@ -51,6 +52,11 @@ struct AppSettings {
     // Управление
     int seekStepSecs = 5;   // шаг перемотки ←/→ (Shift+←/→ всегда ×6)
     int volumeStep   = 5;   // шаг громкости ↑/↓
+
+    // Эквалайзер — гейны полос в дБ, -12..+12; работает только для
+    // локальных аудиофайлов (не видео) через отдельный движок (см. AudioEngine)
+    bool  eqEnabled = false;
+    float eqBands[kEqBandCount] = {0,0,0,0,0,0,0,0};
 };
 
 class SettingsDialog : public QDialog {
@@ -82,9 +88,11 @@ private:
     void buildFilesTab(QWidget *tab);
     void buildInterfaceTab(QWidget *tab);
     void buildIntegrationsTab(QWidget *tab);
+    void buildEqualizerTab(QWidget *tab);
     void collectResult();
     void connectLive();
     void refreshPresetSwatches();
+    void setEqPreset(const float (&gains)[kEqBandCount]);
 
     AppSettings m_result;
 
@@ -121,6 +129,10 @@ private:
     QComboBox *m_volumeStepCombo    = nullptr;
 
     QLabel    *m_cacheSizeLabel = nullptr;
+
+    QCheckBox *m_eqEnabledChk = nullptr;
+    class QSlider *m_eqSliders[kEqBandCount] = { nullptr };
+    QLabel    *m_eqValueLabels[kEqBandCount] = { nullptr };
 
     // collect all live-connectable widgets
     QList<QObject*> m_liveWidgets;
