@@ -29,6 +29,8 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QMessageBox>
+#include <QSlider>
+#include <array>
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -140,6 +142,7 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
 
     auto *tApp  = new QWidget; buildAppearanceTab(tApp);
     auto *tPlay = new QWidget; buildPlayerTab(tPlay);
+    auto *tEq   = new QWidget; buildEqualizerTab(tEq);
     auto *tFile = new QWidget; buildFilesTab(tFile);
     auto *tUi   = new QWidget; buildInterfaceTab(tUi);
     auto *tIntg = new QWidget; buildIntegrationsTab(tIntg);
@@ -148,6 +151,7 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
     const struct { QIcon icon; QString title; QWidget *page; } sections[] = {
         { Ico::sliders(iconColor, 18),    "Внешний вид", tApp  },
         { Ico::play(iconColor, 18),       "Плеер",       tPlay },
+        { Ico::equalizer(iconColor, 18),  "Эквалайзер",  tEq   },
         { Ico::folder(iconColor, 18),     "Файлы",       tFile },
         { Ico::windowIcon(iconColor, 18), "Интерфейс",   tUi   },
         { Ico::link(iconColor, 18),       "Интеграции",  tIntg },
@@ -423,6 +427,88 @@ void SettingsDialog::buildPlayerTab(QWidget *tab) {
     l->addLayout(ctrlForm);
 
     l->addStretch();
+}
+
+void SettingsDialog::buildEqualizerTab(QWidget *tab) {
+    auto *l = new QVBoxLayout(tab);
+    l->setContentsMargins(16,12,16,12);
+    l->setSpacing(8);
+
+    l->addWidget(makeHead("Графический эквалайзер",
+        "Работает только для локальных аудиофайлов и треков по ссылке —\n"
+        "не влияет на видео. Требует отдельного аудио-движка: при первом\n"
+        "включении звук может на мгновение прерваться при переключении."));
+
+    m_eqEnabledChk = new QCheckBox("Включить эквалайзер");
+    m_eqEnabledChk->setChecked(m_result.eqEnabled);
+    l->addWidget(m_eqEnabledChk);
+    m_liveWidgets << m_eqEnabledChk;
+
+    l->addWidget(makeSep());
+
+    auto *bandsRow = new QHBoxLayout;
+    bandsRow->setSpacing(10);
+    for (int i = 0; i < kEqBandCount; ++i) {
+        auto *col = new QVBoxLayout;
+        col->setSpacing(4);
+
+        auto *valLbl = new QLabel("0 дБ");
+        valLbl->setAlignment(Qt::AlignHCenter);
+        valLbl->setStyleSheet("color:#a6adc8;font-size:11px;");
+        m_eqValueLabels[i] = valLbl;
+
+        auto *slider = new QSlider(Qt::Vertical);
+        slider->setRange(-12, 12);
+        slider->setValue(int(m_result.eqBands[i]));
+        slider->setFixedHeight(120);
+        slider->setToolTip(QString("%1 Гц").arg(kEqBandFreqs[i]));
+        m_eqSliders[i] = slider;
+        connect(slider, &QSlider::valueChanged, this, [this, i](int v) {
+            m_eqValueLabels[i]->setText(QString("%1 дБ").arg(v));
+            m_result.eqBands[i] = float(v);
+            liveApply();
+        });
+
+        const QString freqLabel = kEqBandFreqs[i] >= 1000
+            ? QString("%1к").arg(kEqBandFreqs[i] / 1000) : QString::number(kEqBandFreqs[i]);
+        auto *freqLbl = new QLabel(freqLabel);
+        freqLbl->setAlignment(Qt::AlignHCenter);
+        freqLbl->setStyleSheet("color:#6c7086;font-size:11px;");
+
+        col->addWidget(valLbl);
+        col->addWidget(slider, 0, Qt::AlignHCenter);
+        col->addWidget(freqLbl);
+        bandsRow->addLayout(col);
+    }
+    l->addLayout(bandsRow);
+
+    l->addWidget(makeSep());
+
+    auto *presetRow = new QHBoxLayout;
+    presetRow->setSpacing(6);
+    auto addPreset = [&](const QString &name, std::array<float,kEqBandCount> gains) {
+        auto *btn = new QPushButton(name);
+        btn->setFixedHeight(28);
+        connect(btn, &QPushButton::clicked, this, [this, gains]{
+            float arr[kEqBandCount];
+            for (int i = 0; i < kEqBandCount; ++i) arr[i] = gains[i];
+            setEqPreset(arr);
+        });
+        presetRow->addWidget(btn);
+    };
+    addPreset("Плоско",  {0,0,0,0,0,0,0,0});
+    addPreset("Бас",     {6,5,3,1,0,0,0,0});
+    addPreset("Вокал",   {-2,-1,1,4,4,2,0,-1});
+    addPreset("Высокие", {0,0,0,0,1,3,5,6});
+    presetRow->addStretch();
+    l->addLayout(presetRow);
+
+    l->addStretch();
+}
+
+void SettingsDialog::setEqPreset(const float (&gains)[kEqBandCount]) {
+    for (int i = 0; i < kEqBandCount; ++i)
+        m_eqSliders[i]->setValue(int(gains[i]));   // triggers valueChanged -> liveApply for each
 }
 
 void SettingsDialog::buildFilesTab(QWidget *tab) {
@@ -719,6 +805,8 @@ void SettingsDialog::collectResult() {
     m_result.crossfadeSecs  = m_crossfadeCombo->currentData().toInt();
     m_result.seekStepSecs   = m_seekStepCombo->currentData().toInt();
     m_result.volumeStep     = m_volumeStepCombo->currentData().toInt();
+    m_result.eqEnabled      = m_eqEnabledChk->isChecked();
+    // eqBands[] уже обновляются напрямую в лямбде valueChanged каждого слайдера
 
     m_result.libraryFolder   = m_libraryEdit->text().trimmed();
     m_result.playlistsFolder = m_playlistsEdit->text().trimmed();
