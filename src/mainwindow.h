@@ -216,6 +216,10 @@ private:
     void updateLoadingText(const QString &text);
     void setLoadingProgress(int percent);   // -1 = неопределённый (busy-анимация)
     void hideLoadingBanner();
+
+    // Диалог ошибки с текстом, который можно выделить/скопировать —
+    // строка состояния для этого не годится (обрезается, пропадает сама)
+    void showCopyableError(const QString &title, const QString &message);
     void addRecentFile(const QString &path);
     void refreshRecentMenu();
     bool isVideoFile(const QUrl &url) const;
