@@ -88,7 +88,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "1.5.9";
+static const QString kAppVersion = "2.0.0";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -650,12 +650,23 @@ void MainWindow::setupUi() {
     m_miniWaveform->setMinimumWidth(80);
     m_miniWaveform->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
+    // Компактный индикатор загрузки — скрыт, пока нет активного скачивания;
+    // скрытый виджет в layout не занимает места, так что в обычном режиме
+    // мини-панель выглядит как прежде
+    m_miniLoadingBar = new QProgressBar(this);
+    m_miniLoadingBar->setObjectName("loadingBar");
+    m_miniLoadingBar->setRange(0, 0);
+    m_miniLoadingBar->setTextVisible(false);
+    m_miniLoadingBar->setFixedSize(46, 4);
+    m_miniLoadingBar->setVisible(false);
+
     miniL->addWidget(m_miniAlbumArt);
     miniL->addSpacing(2);
     miniL->addWidget(miniPrev);
     miniL->addWidget(m_miniPlayBtn);
     miniL->addWidget(miniNext);
     miniL->addWidget(m_miniTitle);
+    miniL->addWidget(m_miniLoadingBar);
     miniL->addWidget(m_miniWaveform, 1);
     miniL->addWidget(m_miniShuffleBtn);
     miniL->addWidget(m_miniRepeatBtn);
@@ -884,8 +895,10 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *ev) {
         return true;
     }
     // Мини-плеер безрамочный (нет системного заголовка) — тащим окно за
-    // обложку/название/пустое место панели вместо системной шапки
-    if (m_miniPlayer && (obj == m_miniBar || obj == m_miniTitle || obj == m_miniAlbumArt)) {
+    // обложку/название/пустое место панели вместо системной шапки.
+    // Пока панель прижата к верху экрана (m_miniDocked) — двигать её не даём:
+    // она и так на всю ширину, случайный сдвиг мышью только мешает
+    if (m_miniPlayer && !m_miniDocked && (obj == m_miniBar || obj == m_miniTitle || obj == m_miniAlbumArt)) {
         if (ev->type() == QEvent::MouseButtonPress) {
             auto *me = static_cast<QMouseEvent*>(ev);
             if (me->button() == Qt::LeftButton) {
@@ -2813,6 +2826,9 @@ void MainWindow::fadeOutWidget(QWidget *w, int durationMs) {
 void MainWindow::showLoadingBanner(const QString &text) {
     m_loadingText->setText(text);
     m_loadingBar->setRange(0, 0);
+    m_miniLoadingBar->setRange(0, 0);
+    m_miniLoadingBar->setVisible(true);
+    m_miniLoadingBar->setToolTip(text);
     // Отменяем незавершённый fade (в т.ч. fade-out от предыдущего hide) —
     // иначе его finished-колбэк потом спрячет баннер, который мы только что показали
     if (m_loadingAnim) { m_loadingAnim->stop(); m_loadingAnim = nullptr; }
@@ -2838,9 +2854,12 @@ void MainWindow::showLoadingBanner(const QString &text) {
 
 void MainWindow::updateLoadingText(const QString &text) {
     if (m_loadingBanner->isVisible()) m_loadingText->setText(text);
+    m_miniLoadingBar->setToolTip(text);
 }
 
 void MainWindow::setLoadingProgress(int percent) {
+    m_miniLoadingBar->setRange(0, percent < 0 ? 0 : 100);
+    if (percent >= 0) m_miniLoadingBar->setValue(qBound(0, percent, 100));
     if (!m_loadingBanner->isVisible()) return;
     if (percent < 0) {
         m_loadingBar->setRange(0, 0);
@@ -2851,6 +2870,7 @@ void MainWindow::setLoadingProgress(int percent) {
 }
 
 void MainWindow::hideLoadingBanner() {
+    m_miniLoadingBar->setVisible(false);
     if (!m_loadingBanner->isVisible()) return;
     if (m_loadingAnim) { m_loadingAnim->stop(); m_loadingAnim = nullptr; }
 
@@ -2872,14 +2892,54 @@ void MainWindow::hideLoadingBanner() {
     anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
+// Распознаёт частые причины по тексту ошибки yt-dlp/сети и подсказывает,
+// что с этим делать — вместо того чтобы просто показать сырой текст
+static QString suggestFixForError(const QString &errorMsg) {
+    const QString e = errorMsg.toLower();
+    if (e.contains("dpapi") || e.contains("failed to decrypt")) {
+        return "Похоже, дело в куки браузера. Попробуй: Настройки → Интеграции → "
+               "«Ссылки на музыку» → выключи (или смени браузер на Firefox — он не "
+               "использует новую схему шифрования Chrome, из-за которой это происходит).";
+    }
+    if (e.contains("sign in") || e.contains("login required") || e.contains("private video") ||
+        e.contains("age-restricted") || e.contains("age restricted")) {
+        return "Похоже, трек/видео требует входа в аккаунт на сайте-источнике. Попробуй "
+               "указать браузер с активной сессией: Настройки → Интеграции → «Ссылки на музыку».";
+    }
+    if (e.contains("unsupported url") || e.contains("no extractor")) {
+        return "yt-dlp не понимает эту ссылку. Проверь, что она открывается в браузере и "
+               "ведёт на конкретный трек/видео, а не на плейлист/подборку целиком.";
+    }
+    if (e.contains("http error 429") || e.contains("too many requests")) {
+        return "Сайт временно ограничил запросы с твоего адреса — подожди немного и попробуй снова.";
+    }
+    if (e.contains("unable to download webpage") || e.contains("failed to resolve") ||
+        e.contains("connection") || e.contains("timed out") || e.contains("network")) {
+        return "Похоже на проблему с интернет-соединением — проверь подключение (или VPN, "
+               "если сайт заблокирован у провайдера) и попробуй снова.";
+    }
+    if (e.contains("video unavailable") || e.contains("this video is unavailable") ||
+        e.contains("content isn't available") || e.contains("not available")) {
+        return "Трек/видео недоступен на сайте-источнике: удалён, скрыт автором или "
+               "заблокирован в твоём регионе.";
+    }
+    if (e.contains("antivirus") || e.contains("не найден или не может быть запущен")) {
+        return "";  // это сообщение уже содержит собственную подсказку про антивирус
+    }
+    return QString();
+}
+
 void MainWindow::showCopyableError(const QString &title, const QString &message) {
-    QMessageBox box(QMessageBox::Warning, title, message, QMessageBox::NoButton, this);
+    const QString hint = suggestFixForError(message);
+    const QString fullText = hint.isEmpty() ? message : (message + "\n\n💡 " + hint);
+
+    QMessageBox box(QMessageBox::Warning, title, fullText, QMessageBox::NoButton, this);
     box.setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     QPushButton *copyBtn = box.addButton("Копировать", QMessageBox::ActionRole);
     box.addButton("Закрыть", QMessageBox::RejectRole);
     box.exec();
     if (box.clickedButton() == copyBtn) {
-        QGuiApplication::clipboard()->setText(message);
+        QGuiApplication::clipboard()->setText(fullText);
         statusBar()->showMessage("Текст ошибки скопирован в буфер обмена", 3000);
     }
 }
