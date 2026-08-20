@@ -171,12 +171,11 @@ void AudioEngine::setSource(const QUrl &url) {
                 this, &AudioEngine::onDecodeError);
     }
 
-    QAudioFormat fmt;
-    fmt.setSampleRate(44100);
-    fmt.setChannelCount(2);
-    fmt.setSampleFormat(QAudioFormat::Float);
-    m_decoder->setAudioFormat(fmt);
-    m_sampleRate = 44100;
+    // Не навязываем декодеру конкретный формат (Float/44100 и т.п.) —
+    // не все бэкенды готовы отдать именно такой, а при отказе декодер молча
+    // не даёт ни одного буфера. Вместо этого читаем то, что реально пришло
+    // (см. onBufferReady), каким бы ни было исходное качество/частота файла
+    m_sampleRate = 0;
     m_decoder->setSource(url);
     m_decoder->start();
 }
@@ -188,25 +187,57 @@ void AudioEngine::onBufferReady() {
         const QAudioFormat fmt = buf.format();
         const int channels = fmt.channelCount();
         const int frames = buf.frameCount();
+        if (channels < 1 || frames <= 0) continue;
         m_sampleRate = fmt.sampleRate();
 
-        if (fmt.sampleFormat() == QAudioFormat::Float && channels >= 1) {
+        const int n = m_pcm.size();
+        m_pcm.resize(n + frames * 2);
+        float *dst = m_pcm.data() + n;
+
+        switch (fmt.sampleFormat()) {
+        case QAudioFormat::Float: {
             const float *src = buf.constData<float>();
-            const int n = m_pcm.size();
-            m_pcm.resize(n + frames * 2);
-            float *dst = m_pcm.data() + n;
             for (int i = 0; i < frames; ++i) {
-                const float l = src[i * channels + 0];
-                const float r = (channels > 1) ? src[i * channels + 1] : l;
-                dst[i * 2]     = l;
-                dst[i * 2 + 1] = r;
+                dst[i*2]   = src[i*channels + 0];
+                dst[i*2+1] = (channels > 1) ? src[i*channels + 1] : dst[i*2];
             }
+            break;
+        }
+        case QAudioFormat::Int16: {
+            const qint16 *src = buf.constData<qint16>();
+            for (int i = 0; i < frames; ++i) {
+                dst[i*2]   = src[i*channels + 0] / 32768.0f;
+                dst[i*2+1] = (channels > 1) ? src[i*channels + 1] / 32768.0f : dst[i*2];
+            }
+            break;
+        }
+        case QAudioFormat::Int32: {
+            const qint32 *src = buf.constData<qint32>();
+            for (int i = 0; i < frames; ++i) {
+                dst[i*2]   = float(src[i*channels + 0] / 2147483648.0);
+                dst[i*2+1] = (channels > 1) ? float(src[i*channels + 1] / 2147483648.0) : dst[i*2];
+            }
+            break;
+        }
+        case QAudioFormat::UInt8: {
+            const quint8 *src = buf.constData<quint8>();
+            for (int i = 0; i < frames; ++i) {
+                dst[i*2]   = (int(src[i*channels + 0]) - 128) / 128.0f;
+                dst[i*2+1] = (channels > 1) ? (int(src[i*channels + 1]) - 128) / 128.0f : dst[i*2];
+            }
+            break;
+        }
+        default:
+            // Неизвестный формат сэмплов — этот буфер прочитать не можем
+            m_pcm.resize(n);
+            break;
         }
     }
 }
 
 void AudioEngine::onDecodeFinished() {
     m_device->setPcm(m_pcm, m_sampleRate > 0 ? m_sampleRate : 44100);
+    ensureSink(m_sampleRate > 0 ? m_sampleRate : 44100);
     emit ready();
 
     if (m_pendingSeekMs >= 0) {
@@ -223,10 +254,11 @@ void AudioEngine::onDecodeError() {
     emit decodeError(m_decoder->errorString());
 }
 
-void AudioEngine::startSinkIfNeeded() {
-    if (m_sink) return;
+void AudioEngine::ensureSink(int sampleRate) {
+    if (m_sink && m_sink->format().sampleRate() == sampleRate) return;
+    if (m_sink) { m_sink->stop(); m_sink->deleteLater(); m_sink = nullptr; }
     QAudioFormat fmt;
-    fmt.setSampleRate(44100);
+    fmt.setSampleRate(sampleRate);
     fmt.setChannelCount(2);
     fmt.setSampleFormat(QAudioFormat::Float);
     m_sink = new QAudioSink(fmt, this);
@@ -234,7 +266,7 @@ void AudioEngine::startSinkIfNeeded() {
 
 void AudioEngine::play() {
     if (m_device->totalFrames() <= 0) { m_pendingPlay = true; return; }
-    startSinkIfNeeded();
+    ensureSink(m_sampleRate > 0 ? m_sampleRate : 44100);
     switch (m_sink->state()) {
     case QAudio::ActiveState: break;
     case QAudio::SuspendedState: m_sink->resume(); break;

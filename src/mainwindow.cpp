@@ -18,6 +18,8 @@
 #include <QEasingCurve>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGridLayout>
+#include <QDialog>
 #include <QToolButton>
 #include <QSlider>
 #include <QLabel>
@@ -88,7 +90,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "2.1.0";
+static const QString kAppVersion = "2.1.1";
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -230,7 +232,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_eqEngine, &AudioEngine::decodeError, this, [this](const QString &msg){
         m_eqActive = false;
         applyVolume();
-        statusBar()->showMessage("Эквалайзер недоступен для этого трека: " + msg, 5000);
+        showCopyableError("Эквалайзер недоступен для этого трека",
+            "Не удалось декодировать трек для эквалайзера — играет обычный "
+            "плеер без него.\n\n" + msg);
     });
 
     // Metadata-only reader — no audio output, used for background icon scanning
@@ -1283,6 +1287,36 @@ void MainWindow::applyTheme() {
         }
         QPushButton#settingsOkBtn:hover   { background-color: #d4b8f9; }
         QPushButton#settingsOkBtn:pressed { background-color: #b389f4; }
+
+        /* ── About dialog ── */
+        QWidget#aboutHeader {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 rgba(203,166,247,45), stop:1 rgba(137,180,250,25));
+            border-bottom: 1px solid #313244;
+        }
+        QLabel#aboutName    { color: ACCENT; font-size: 22px; font-weight: bold; }
+        QLabel#aboutVersion {
+            color: #a6adc8; font-size: 11px;
+            background-color: rgba(255,255,255,20);
+            border-radius: 9px; padding: 2px 10px;
+        }
+        QLabel#aboutTagline     { color: #a6adc8; font-size: 12px; }
+        QLabel#aboutFeatureText { color: #cdd6f4; font-size: 12px; }
+        QFrame#aboutSep         { background: #292941; max-height: 1px; border: none; }
+        QLabel#aboutKeyChip {
+            color: #cdd6f4; font-size: 11px;
+            background-color: #292941; border: 1px solid #313244;
+            border-radius: 9px; padding: 3px 9px;
+        }
+        QLabel#aboutLink    { font-size: 12px; }
+        QLabel#aboutLicense { color: #6c7086; font-size: 11px; }
+        QWidget#aboutFooter { background-color: rgba(24,24,37,140); border-top: 1px solid #313244; }
+        QPushButton#aboutCloseBtn {
+            background-color: ACCENT; color: #1e1e2e; border: none;
+            border-radius: 8px; font-weight: bold; padding: 0 30px;
+        }
+        QPushButton#aboutCloseBtn:hover   { background-color: #d4b8f9; }
+        QPushButton#aboutCloseBtn:pressed { background-color: #b389f4; }
 
         QGroupBox { border: 1px solid #313244; border-radius: 6px; margin-top: 6px; padding-top: 6px; color: #a6adc8; }
         QLabel#settingsHead { color: #cdd6f4; font-weight: bold; font-size: 13px; }
@@ -3079,41 +3113,134 @@ void MainWindow::updateTimeDisplay(qint64 pos, qint64 dur) {
 // ─── About ───────────────────────────────────────────────────────────────────
 
 void MainWindow::showAbout() {
-    QMessageBox::about(this, "О программе EchoBox II",
-        "<h2 style='color:#cba6f7'>EchoBox II  v" + kAppVersion + "</h2>"
-        "<p>Современный медиаплеер на <b>C++ / Qt6</b></p>"
-        "<p>Форматы: MP3, FLAC, OGG, WAV, AAC, M4A, OPUS,<br>"
-        "MP4, MKV, AVI, MOV, WebM и другие</p>"
-        "<hr>"
-        "<p><b>Возможности:</b></p>"
-        "<ul style='margin:0;padding-left:16px'>"
-        "<li>Воспроизведение по ссылке — SoundCloud, YouTube и др. (Ctrl+U)</li>"
-        "<li>Осциллограмма на слайдере перемотки</li>"
-        "<li>Анимированный фон с частицами, реагирующий на музыку</li>"
-        "<li>Умный поиск по названию, исполнителю и альбому</li>"
-        "<li>Сканер библиотеки (Файл → Сканировать библиотеку)</li>"
-        "<li>Кастомный шрифт интерфейса</li>"
-        "<li>Discord Rich Presence</li>"
-        "<li>Автообновление (Справка → Проверить обновления)</li>"
-        "<li>Кроссфейд, память позиции, несколько плейлистов</li>"
-        "<li>8-полосный эквалайзер (Настройки → Эквалайзер)</li>"
-        "</ul>"
-        "<hr>"
-        "<p><b>Горячие клавиши:</b></p>"
-        "<table cellspacing='4'>"
-        "<tr><td><b>Пробел</b></td><td>Играть / Пауза</td></tr>"
-        "<tr><td><b>M</b></td><td>Выкл. / вкл. звук</td></tr>"
-        "<tr><td><b>Ctrl+←/→</b></td><td>Предыдущий / Следующий</td></tr>"
-        "<tr><td><b>←/→</b></td><td>Перемотка (шаг — в настройках)</td></tr>"
-        "<tr><td><b>Shift+←/→</b></td><td>Перемотка ×6</td></tr>"
-        "<tr><td><b>↑/↓</b></td><td>Громкость (шаг — в настройках)</td></tr>"
-        "<tr><td><b>Del</b></td><td>Удалить из плейлиста</td></tr>"
-        "<tr><td><b>Ctrl+F</b></td><td>Фокус на поиск</td></tr>"
-        "<tr><td><b>Ctrl+U</b></td><td>Открыть по ссылке</td></tr>"
-        "<tr><td><b>F11</b></td><td>Мини-плеер</td></tr>"
-        "</table>"
-        "<hr>"
-        "<p style='color:#6c7086'>© 2026 BANANCHIKIREAL · MIT License</p>");
+    QDialog dlg(this);
+    dlg.setWindowTitle("О программе");
+    dlg.setFixedWidth(460);
+    dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowContextHelpButtonHint);
+
+    auto *root = new QVBoxLayout(&dlg);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
+
+    // ── Header: логотип, название, версия ─────────────────────────────────
+    auto *header = new QWidget(&dlg);
+    header->setObjectName("aboutHeader");
+    auto *headerL = new QVBoxLayout(header);
+    headerL->setContentsMargins(0, 30, 0, 22);
+    headerL->setSpacing(8);
+
+    auto *logoLbl = new QLabel(header);
+    logoLbl->setPixmap(createLogo(88));
+    logoLbl->setFixedSize(88, 88);
+    headerL->addWidget(logoLbl, 0, Qt::AlignHCenter);
+
+    auto *nameLbl = new QLabel("EchoBox II", header);
+    nameLbl->setObjectName("aboutName");
+    nameLbl->setAlignment(Qt::AlignHCenter);
+    headerL->addWidget(nameLbl);
+
+    auto *verLbl = new QLabel("версия " + kAppVersion, header);
+    verLbl->setObjectName("aboutVersion");
+    verLbl->setAlignment(Qt::AlignCenter);
+    headerL->addWidget(verLbl, 0, Qt::AlignHCenter);
+
+    root->addWidget(header);
+
+    // ── Body ────────────────────────────────────────────────────────────────
+    auto *body = new QWidget(&dlg);
+    auto *bodyL = new QVBoxLayout(body);
+    bodyL->setContentsMargins(30, 22, 30, 18);
+    bodyL->setSpacing(16);
+
+    auto *tagline = new QLabel(
+        "Современный медиаплеер на C++ / Qt6 — локальные файлы, ссылки "
+        "на музыку, живой визуализатор и эквалайзер", body);
+    tagline->setObjectName("aboutTagline");
+    tagline->setWordWrap(true);
+    tagline->setAlignment(Qt::AlignHCenter);
+    bodyL->addWidget(tagline);
+
+    const QColor featIconColor(0xcb, 0xa6, 0xf7);
+    const struct { QIcon icon; QString text; } feats[] = {
+        { Ico::link(featIconColor, 16),      "Ссылки: SoundCloud, YouTube и другие" },
+        { Ico::equalizer(featIconColor, 16), "8-полосный графический эквалайзер" },
+        { Ico::sliders(featIconColor, 16),   "Десятки настроек почти для всего" },
+        { Ico::windowIcon(featIconColor, 16),"Мини-плеер, докинг к верху экрана" },
+        { Ico::folder(featIconColor, 16),    "Сканер библиотеки, умный поиск" },
+        { Ico::play(featIconColor, 16),      "Кроссфейд, плейлисты, память позиции" },
+    };
+    auto *grid = new QGridLayout;
+    grid->setHorizontalSpacing(10);
+    grid->setVerticalSpacing(10);
+    grid->setColumnStretch(1, 1);
+    for (int i = 0; i < int(sizeof(feats) / sizeof(feats[0])); ++i) {
+        auto *iconLbl = new QLabel(body);
+        iconLbl->setPixmap(feats[i].icon.pixmap(16, 16));
+        iconLbl->setFixedWidth(20);
+        auto *textLbl = new QLabel(feats[i].text, body);
+        textLbl->setObjectName("aboutFeatureText");
+        grid->addWidget(iconLbl, i, 0);
+        grid->addWidget(textLbl, i, 1);
+    }
+    bodyL->addLayout(grid);
+
+    auto *sep = new QFrame(body);
+    sep->setFrameShape(QFrame::HLine);
+    sep->setObjectName("aboutSep");
+    bodyL->addWidget(sep);
+
+    auto *keysRow = new QHBoxLayout;
+    keysRow->setSpacing(6);
+    const QStringList keyChips = {"Space — играть", "Ctrl+U — по ссылке", "F11 — мини-плеер"};
+    for (const QString &chip : keyChips) {
+        auto *lbl = new QLabel(chip, body);
+        lbl->setObjectName("aboutKeyChip");
+        keysRow->addWidget(lbl);
+    }
+    keysRow->addStretch();
+    bodyL->addLayout(keysRow);
+
+    auto *linkLbl = new QLabel(
+        "<a href='https://github.com/BANANCHIKIREAL/EchoBox-II' "
+        "style='color:#89b4fa;text-decoration:none;'>"
+        "github.com/BANANCHIKIREAL/EchoBox-II</a>", body);
+    linkLbl->setOpenExternalLinks(true);
+    linkLbl->setAlignment(Qt::AlignHCenter);
+    linkLbl->setObjectName("aboutLink");
+    bodyL->addWidget(linkLbl);
+
+    auto *licenseLbl = new QLabel("© 2026 BANANCHIKIREAL · MIT + Commons Clause", body);
+    licenseLbl->setObjectName("aboutLicense");
+    licenseLbl->setAlignment(Qt::AlignHCenter);
+    bodyL->addWidget(licenseLbl);
+
+    root->addWidget(body);
+
+    // ── Footer ──────────────────────────────────────────────────────────────
+    auto *footer = new QWidget(&dlg);
+    footer->setObjectName("aboutFooter");
+    auto *footerL = new QHBoxLayout(footer);
+    footerL->setContentsMargins(24, 14, 24, 14);
+    auto *closeBtn = new QPushButton("Закрыть", footer);
+    closeBtn->setObjectName("aboutCloseBtn");
+    closeBtn->setFixedHeight(34);
+    closeBtn->setCursor(Qt::PointingHandCursor);
+    connect(closeBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
+    footerL->addStretch();
+    footerL->addWidget(closeBtn);
+    footerL->addStretch();
+    root->addWidget(footer);
+
+    // Плавное появление — как у диалога настроек
+    dlg.setWindowOpacity(0.0);
+    auto *fadeAnim = new QPropertyAnimation(&dlg, "windowOpacity", &dlg);
+    fadeAnim->setDuration(320);
+    fadeAnim->setStartValue(0.0);
+    fadeAnim->setEndValue(1.0);
+    fadeAnim->setEasingCurve(QEasingCurve::OutCubic);
+    QTimer::singleShot(0, &dlg, [fadeAnim]{ fadeAnim->start(QAbstractAnimation::DeleteWhenStopped); });
+
+    dlg.exec();
 }
 
 // ─── Обновления ──────────────────────────────────────────────────────────────

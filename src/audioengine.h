@@ -115,5 +115,5 @@ private:
     bool   m_pendingPlay   = false;
     qint64 m_pendingSeekMs = -1;
 
-    void startSinkIfNeeded();
+    void ensureSink(int sampleRate);
 };
