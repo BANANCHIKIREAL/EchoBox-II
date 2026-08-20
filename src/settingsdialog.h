@@ -61,10 +61,13 @@ private:
     void buildIntegrationsTab(QWidget *tab);
     void collectResult();
     void connectLive();
+    void refreshPresetSwatches();
 
     AppSettings m_result;
 
     QLabel        *m_accentSwatch    = nullptr;
+    QList<class QPushButton*> m_presetBtns;
+    QList<QColor>              m_presetColors;
     QButtonGroup  *m_fontGroup       = nullptr;
     QFontComboBox *m_fontFamilyCombo = nullptr;
     QComboBox     *m_artShapeCombo   = nullptr;
