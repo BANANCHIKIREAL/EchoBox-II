@@ -90,7 +90,7 @@
 
 // ─── Static data ─────────────────────────────────────────────────────────────
 
-static const QString kAppVersion = "2.1.1";
+static const QString kAppVersion = QStringLiteral(ECHOBOX_VERSION);
 // Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
 // pre-release-версии (наши beta.*), поэтому берём общий список и находим
 // самую новую версию сами (ниже, в checkForUpdates)
@@ -3311,16 +3311,26 @@ void MainWindow::checkForUpdates(bool manual) {
         const QString skipKey = "update/skippedVersion";
         if (!manual && m_settings.value(skipKey).toString() == tag) return;
 
-        // Если к релизу приложен .zip — можем скачать и поставить сами,
-        // не отправляя пользователя на GitHub руками
-        QString assetUrl;
+        // Установленную версию обновляем через Inno Setup: он сохраняет
+        // каталог установки и заново создаёт ярлыки. Portable-сборку
+        // по-прежнему обновляем ZIP-архивом на месте.
+        QString installerUrl;
+        QString zipUrl;
         for (const QJsonValue &a : newest.value("assets").toArray()) {
             const QJsonObject ao = a.toObject();
-            if (ao.value("name").toString().endsWith(".zip", Qt::CaseInsensitive)) {
-                assetUrl = ao.value("browser_download_url").toString();
-                break;
-            }
+            const QString name = ao.value("name").toString();
+            const QString downloadUrl = ao.value("browser_download_url").toString();
+            if (name.endsWith(".exe", Qt::CaseInsensitive)
+                && name.contains("setup", Qt::CaseInsensitive))
+                installerUrl = downloadUrl;
+            else if (name.endsWith(".zip", Qt::CaseInsensitive))
+                zipUrl = downloadUrl;
         }
+        const QString appDir = QCoreApplication::applicationDirPath();
+        const bool installedBuild = QFileInfo(appDir + "/unins000.exe").exists();
+        const QString assetUrl = installedBuild && !installerUrl.isEmpty()
+            ? installerUrl
+            : (!zipUrl.isEmpty() ? zipUrl : installerUrl);
 
         QMessageBox box(this);
         box.setWindowTitle("Доступно обновление");
@@ -3350,6 +3360,7 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
     showLoadingBanner("Скачивание обновления " + tag + "…");
     setLoadingProgress(0);
 
+    const bool installerAsset = QUrl(assetUrl).path().endsWith(".exe", Qt::CaseInsensitive);
     QNetworkReply *reply = m_streamArtNam->get(QNetworkRequest(QUrl(assetUrl)));
     connect(reply, &QNetworkReply::downloadProgress, this,
         [this, tag](qint64 received, qint64 total) {
@@ -3360,7 +3371,7 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
             }
         });
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, tag]{
+    connect(reply, &QNetworkReply::finished, this, [this, reply, tag, installerAsset]{
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
             hideLoadingBanner();
@@ -3373,6 +3384,56 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
                                + "/EchoBoxII_update";
         QDir(tempDir).removeRecursively();
         QDir().mkpath(tempDir);
+
+        if (installerAsset) {
+            const QString setupPath = tempDir + "/EchoBoxII-Setup.exe";
+            QFile setup(setupPath);
+            if (!setup.open(QIODevice::WriteOnly) || setup.write(data) != data.size()) {
+                hideLoadingBanner();
+                statusBar()->showMessage("Не удалось сохранить установщик обновления", 6000);
+                return;
+            }
+            setup.close();
+
+            const QString exePath = QCoreApplication::applicationFilePath();
+            const QString scriptPath = tempDir + "/apply_installer_update.ps1";
+            QFile script(scriptPath);
+            if (!script.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                hideLoadingBanner();
+                statusBar()->showMessage("Не удалось подготовить установку обновления", 6000);
+                return;
+            }
+            QTextStream out(&script);
+            out << "$targetPid = " << QCoreApplication::applicationPid() << "\n"
+                << "for ($i = 0; $i -lt 150; $i++) {\n"
+                << "    if (-not (Get-Process -Id $targetPid -ErrorAction SilentlyContinue)) { break }\n"
+                << "    Start-Sleep -Milliseconds 200\n"
+                << "}\n"
+                << "$setup = '" << setupPath << "'\n"
+                << "$args = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS')\n"
+                << "$process = Start-Process -FilePath $setup -ArgumentList $args -Wait -PassThru\n"
+                << "if ($process.ExitCode -eq 0 -and (Test-Path -LiteralPath '" << exePath << "')) {\n"
+                << "    Start-Process -FilePath '" << exePath << "'\n"
+                << "}\n"
+                << "Remove-Item -Recurse -Force '" << tempDir << "' -ErrorAction SilentlyContinue\n";
+            script.close();
+
+            if (!QProcess::startDetached("powershell",
+                    {"-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+                     "-File", scriptPath})) {
+                hideLoadingBanner();
+                statusBar()->showMessage("Не удалось запустить установщик обновления", 6000);
+                return;
+            }
+
+            QMessageBox::information(this, "Обновление",
+                "Обновление " + tag + " скачано. Приложение сейчас закроется, "
+                "установщик восстановит файлы и ярлык, затем EchoBox II запустится снова.");
+            saveSettings();
+            qApp->quit();
+            return;
+        }
+
         const QString zipPath     = tempDir + "/update.zip";
         const QString extractDir  = tempDir + "/extracted";
 

@@ -1,6 +1,6 @@
 #define MyAppName "EchoBox II"
 #ifndef MyAppVersion
-  #define MyAppVersion "2.1.1"
+  #define MyAppVersion "2.1.2"
 #endif
 #define MyAppPublisher "BANANCHIKIREAL"
 #define MyAppURL "https://github.com/BANANCHIKIREAL/EchoBox-II"
@@ -29,13 +29,12 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
+CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
-
-[Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 Source: "..\dist\EchoBox-II\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -43,7 +42,9 @@ Source: "..\dist\EchoBox-II\*"; DestDir: "{app}"; Flags: ignoreversion recursesu
 [Icons]
 Name: "{group}\EchoBox II"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:UninstallProgram,EchoBox II}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\EchoBox II"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+; Всегда пересоздаём ярлык при установке и обновлении. Это чинит старый
+; ярлык, даже если каталог приложения когда-либо изменился.
+Name: "{autodesktop}\EchoBox II"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,EchoBox II}"; Flags: nowait postinstall skipifsilent
