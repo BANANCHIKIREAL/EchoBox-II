@@ -8,6 +8,7 @@
 #include "logo.h"
 #include "icons.h"
 #include "discordrpc.h"
+#include "thememanager.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -63,8 +64,6 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QFile>
-#include <QSaveFile>
-#include <QDataStream>
 #include <QCryptographicHash>
 #include <QTimer>
 #include <QAudioSink>
@@ -140,6 +139,16 @@ public:
     bool showIcons = true;
     using QStyledItemDelegate::QStyledItemDelegate;
 
+    void setTheme(const ThemePalette &theme) {
+        m_selectedBg = theme.surface2;
+        m_hoverBg = theme.surface1;
+        m_placeholderBg = theme.surface0;
+        m_muted = theme.overlay0;
+        m_text = theme.text;
+        m_accent = theme.accent;
+        m_duplicate = theme.danger;
+    }
+
     QSize sizeHint(const QStyleOptionViewItem &o, const QModelIndex &i) const override {
         QSize s = QStyledItemDelegate::sizeHint(o, i);
         return {s.width(), showIcons ? 44 : 32};
@@ -150,13 +159,14 @@ public:
 
         // Background
         if (opt.state & QStyle::State_Selected)
-            p->fillRect(opt.rect, QColor(0x45,0x47,0x5a));
+            p->fillRect(opt.rect, m_selectedBg);
         else if (opt.state & QStyle::State_MouseOver)
-            p->fillRect(opt.rect, QColor(0x2a,0x2b,0x3d));
+            p->fillRect(opt.rect, m_hoverBg);
 
         // Duplicate highlight — drawn after base bg, before content
         if (idx.data(Qt::UserRole + 10).toBool())
-            p->fillRect(opt.rect, QColor(0xeb, 0xa0, 0xac, 40));
+            p->fillRect(opt.rect, QColor(m_duplicate.red(), m_duplicate.green(),
+                                         m_duplicate.blue(), 40));
 
         const int iconSz = 36;
         const int margin = 4;
@@ -187,10 +197,10 @@ public:
             } else {
                 // placeholder
                 p->setPen(Qt::NoPen);
-                p->setBrush(QColor(0x31,0x32,0x44));
+                p->setBrush(m_placeholderBg);
                 p->setRenderHint(QPainter::Antialiasing);
                 p->drawRoundedRect(ir, 5, 5);
-                p->setPen(QColor(0x6c,0x70,0x86));
+                p->setPen(m_muted);
                 p->setFont(QFont("Segoe UI", 14));
                 p->drawText(ir, Qt::AlignCenter, "♪");
             }
@@ -202,7 +212,7 @@ public:
         int rightEdge = opt.rect.right() - 8;
         if (!dur.isEmpty()) {
             QFont df = p->font(); df.setPointSize(9); p->setFont(df);
-            p->setPen(QColor(0x6c,0x70,0x86));
+            p->setPen(m_muted);
             int dw = p->fontMetrics().horizontalAdvance(dur) + 4;
             p->drawText(QRect(opt.rect.right() - dw - 8, opt.rect.top(), dw + 8, opt.rect.height()),
                         Qt::AlignRight | Qt::AlignVCenter, dur);
@@ -213,12 +223,21 @@ public:
         QString text = idx.data(Qt::DisplayRole).toString();
         QFont tf = p->font(); tf.setPointSize(10); p->setFont(tf);
         p->setPen((opt.state & QStyle::State_Selected)
-                  ? QColor(0xcb,0xa6,0xf7) : QColor(0xcd,0xd6,0xf4));
+                  ? m_accent : m_text);
         p->drawText(QRect(textX, opt.rect.top(), rightEdge - textX, opt.rect.height()),
                     Qt::AlignVCenter | Qt::TextSingleLine, text);
 
         p->restore();
     }
+
+private:
+    QColor m_selectedBg {0x45,0x47,0x5a};
+    QColor m_hoverBg {0x2a,0x2b,0x3d};
+    QColor m_placeholderBg {0x31,0x32,0x44};
+    QColor m_muted {0x6c,0x70,0x86};
+    QColor m_text {0xcd,0xd6,0xf4};
+    QColor m_accent {0xcb,0xa6,0xf7};
+    QColor m_duplicate {0xeb,0xa0,0xac};
 };
 
 static PlaylistDelegate *g_delegate = nullptr;
@@ -994,7 +1013,8 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *ev) {
 
 void MainWindow::applyTheme() {
     // Compute accent color variants
-    const QColor ac = m_cfg.accentColor;
+    const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+    const QColor ac = theme.accent;
     const QString acH = ac.name();
     const QString acL = ac.lighter(112).name();   // play btn hover
     const QString acD = ac.darker(112).name();    // play btn pressed
@@ -1460,6 +1480,9 @@ void MainWindow::applyTheme() {
         QToolButton#helpBtn:hover { background: #45475a; color: ACCENT; border-color: ACCENT; }
     )";
 
+    // Replace the complete base palette before applying the user's accent.
+    ThemeManager::applyPaletteTokens(ss, theme);
+
     // Apply dynamic values
     ss.replace("ACCENT",    acH);
     ss.replace("#cba6f7",   acH);
@@ -1501,19 +1524,29 @@ void MainWindow::applyTheme() {
 
 
     // Art shape — radius applied directly to pixmap in updateAlbumArt/onMetaDataChanged
-    m_mediaStack->setStyleSheet("QWidget#mediaStack{background-color:#181825;}");
+    m_mediaStack->setStyleSheet(QString(
+        "QWidget#mediaStack{background-color:%1;}").arg(theme.mantle.name()));
     updateAlbumArt();
 
     // Visibility
-    if (m_aurora) m_aurora->setLightMode(false);
-    if (m_visualizer)  m_visualizer->setVisible(m_cfg.showVisualizer);
+    if (m_aurora) {
+        m_aurora->setLightMode(false);
+        m_aurora->setThemeColors(theme.crust.darker(112), theme.mantle,
+                                 theme.crust.darker(125),
+                                 ThemeManager::visualColors(theme));
+    }
+    if (m_visualizer) {
+        m_visualizer->setThemeColors(theme.mantle,
+            {theme.teal, theme.accent2, theme.accent, theme.danger});
+        m_visualizer->setVisible(m_cfg.showVisualizer);
+    }
     statusBar()->setVisible(m_cfg.showStatusBar);
 
     // Update font size
     QFont f = font(); f.setPointSize(fs); setFont(f);
 
     // Refresh play button icon color (contrast against accent)
-    const QColor iconC = ac.lightness() > 160 ? QColor(0x1e,0x1e,0x2e) : QColor(0xff,0xff,0xff);
+    const QColor iconC = ac.lightness() > 160 ? theme.crust : QColor(0xff,0xff,0xff);
     const bool playing = m_player && m_player->playbackState() == QMediaPlayer::PlayingState;
 
     if (m_playPauseBtn) {
@@ -1531,13 +1564,30 @@ void MainWindow::applyTheme() {
             "QToolButton#playBtn:pressed{background-color:%3;}").arg(acH,acL,acD));
     }
 
+    const QColor controlColor = theme.text;
+    if (m_prevBtn) m_prevBtn->setIcon(Ico::prev(controlColor, 22));
+    if (m_nextBtn) m_nextBtn->setIcon(Ico::next(controlColor, 22));
+    if (m_stopBtn) m_stopBtn->setIcon(Ico::stop(controlColor, 16));
+    const QColor shuffleColor = m_shuffle ? theme.accent : theme.subtext0;
+    if (m_shuffleBtn) m_shuffleBtn->setIcon(Ico::shuffle(shuffleColor, 18));
+    if (m_miniShuffleBtn) m_miniShuffleBtn->setIcon(Ico::shuffle(shuffleColor, 15));
+    setVolume(m_volumeSlider->value());
+    updateRepeatButton();
+
     // Repaint playlist viewport so item icons remain visible after stylesheet change
+    if (g_delegate) g_delegate->setTheme(theme);
     if (m_playlistWidget) m_playlistWidget->viewport()->update();
 
-    const QColor wAccent(0xcb, 0xa6, 0xf7);
-    const QColor wTrack (0x45, 0x47, 0x5a);
-    if (m_seekSlider)  { m_seekSlider->setAccentColor(wAccent); m_seekSlider->setTrackColor(wTrack); }
-    if (m_miniWaveform){ m_miniWaveform->setAccentColor(wAccent); m_miniWaveform->setTrackColor(wTrack); }
+    if (m_seekSlider) {
+        m_seekSlider->setAccentColor(theme.accent);
+        m_seekSlider->setTrackColor(theme.surface2);
+        m_seekSlider->setBackgroundColor(theme.base);
+    }
+    if (m_miniWaveform) {
+        m_miniWaveform->setAccentColor(theme.accent);
+        m_miniWaveform->setTrackColor(theme.surface2);
+        m_miniWaveform->setBackgroundColor(theme.base);
+    }
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────
@@ -2622,7 +2672,7 @@ void MainWindow::setVolume(int v) {
     applyVolume();
     m_volumeLabel->setText(QString("%1%").arg(v));
     const int level = (v == 0) ? 0 : (v < 40) ? 1 : (v < 75) ? 2 : 3;
-    const QColor vc(0xcd,0xd6,0xf4);
+    const QColor vc = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor).text;
     m_muteBtn->setIcon(Ico::volume(level, vc, 22));
     if (m_miniMuteBtn)   m_miniMuteBtn->setIcon(Ico::volume(level, vc, 18));
     // Синхронизация слайдеров без рекурсии
@@ -2656,7 +2706,8 @@ void MainWindow::onSpeedChanged(int index) {
 void MainWindow::toggleShuffle() {
     m_shuffle = !m_shuffle;
     m_shuffleBtn->setChecked(m_shuffle);
-    const QColor c = m_shuffle ? QColor(0xcb,0xa6,0xf7) : QColor(0xa6,0xad,0xc8);
+    const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+    const QColor c = m_shuffle ? theme.accent : theme.subtext0;
     m_shuffleBtn->setIcon(Ico::shuffle(c, 18));
     if (m_miniShuffleBtn) { m_miniShuffleBtn->setChecked(m_shuffle); m_miniShuffleBtn->setIcon(Ico::shuffle(c, 15)); }
     if (m_shuffleAct) m_shuffleAct->setChecked(m_shuffle);
@@ -2675,8 +2726,9 @@ void MainWindow::cycleRepeat() {
 }
 
 void MainWindow::updateRepeatButton() {
-    const QColor off(0xa6,0xad,0xc8);
-    const QColor on (0xcb,0xa6,0xf7);
+    const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+    const QColor off = theme.subtext0;
+    const QColor on = theme.accent;
     switch (m_repeat) {
     case RepeatMode::Off:
         m_repeatBtn->setIcon(Ico::repeatAll(off, 18));
@@ -2790,7 +2842,7 @@ void MainWindow::onDurationChanged(qint64 duration) {
     if (duration > 0) {
         const QUrl src = m_player->source();
         QVector<float> cached;
-        if (loadWaveformCache(src, duration, &cached)) {
+        if (m_waveformCache.load(src, duration, &cached)) {
             applyWaveformPeaks(cached);
         } else {
             m_miniWaveform->clearWaveform();
@@ -2821,129 +2873,9 @@ void MainWindow::resetWaveformUi() {
     m_timeLabel->setText("0:00 / 0:00");
 }
 
-QString MainWindow::waveformCacheDir() const {
-    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/waveforms";
-}
-
-QString MainWindow::waveformCacheKey(const QUrl &url, qint64 duration) const {
-    QByteArray identity = url.toEncoded(QUrl::FullyEncoded);
-    if (url.isLocalFile()) {
-        const QFileInfo info(url.toLocalFile());
-        const QString path = info.canonicalFilePath().isEmpty()
-            ? info.absoluteFilePath() : info.canonicalFilePath();
-        identity += "\npath=";
-        identity += path.toUtf8();
-        identity += "\nsize=";
-        identity += QByteArray::number(info.size());
-        identity += "\nmodified=";
-        identity += QByteArray::number(info.lastModified().toMSecsSinceEpoch());
-    }
-    // Округление до секунды не создаёт промах кэша из-за мелкой разницы,
-    // с которой разные мультимедийные бэкенды могут сообщать длительность.
-    identity += "\nduration=";
-    identity += QByteArray::number((duration + 500) / 1000);
-    return QString::fromLatin1(
-        QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
-}
-
-void MainWindow::rememberWaveform(const QString &key, const QVector<float> &peaks) {
-    if (key.isEmpty() || peaks.isEmpty()) return;
-    m_waveformMemoryOrder.removeAll(key);
-    m_waveformMemoryOrder.append(key);
-    m_waveformMemoryCache.insert(key, peaks);
-
-    // 12 форм волн занимают примерно 24 КБ при 500 float-пиках на трек.
-    // Остальные остаются на диске и подгружаются по требованию.
-    while (m_waveformMemoryOrder.size() > 12) {
-        const QString oldest = m_waveformMemoryOrder.takeFirst();
-        m_waveformMemoryCache.remove(oldest);
-    }
-}
-
-bool MainWindow::loadWaveformCache(const QUrl &url, qint64 duration,
-                                   QVector<float> *peaks) {
-    if (!peaks || !url.isValid() || duration <= 0) return false;
-    const QString key = waveformCacheKey(url, duration);
-    const auto memory = m_waveformMemoryCache.constFind(key);
-    if (memory != m_waveformMemoryCache.constEnd()) {
-        *peaks = memory.value();
-        m_waveformMemoryOrder.removeAll(key);
-        m_waveformMemoryOrder.append(key);
-        return true;
-    }
-
-    const QString path = waveformCacheDir() + "/" + key + ".wfc";
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) return false;
-
-    QDataStream stream(&file);
-    stream.setVersion(QDataStream::Qt_6_0);
-    stream.setFloatingPointPrecision(QDataStream::SinglePrecision);
-    quint32 magic = 0;
-    quint16 version = 0;
-    qint64 cachedDuration = 0;
-    quint32 count = 0;
-    stream >> magic >> version >> cachedDuration >> count;
-    if (magic != 0x45425746u || version != 1 || count == 0 || count > 2048 ||
-        qAbs(cachedDuration - duration) > 1500) {
-        file.close();
-        QFile::remove(path);
-        return false;
-    }
-
-    QVector<float> loaded;
-    loaded.reserve(int(count));
-    for (quint32 i = 0; i < count; ++i) {
-        float value = 0.0f;
-        stream >> value;
-        if (!std::isfinite(value) || value < 0.0f || value > 1.0f) {
-            file.close();
-            QFile::remove(path);
-            return false;
-        }
-        loaded.append(value);
-    }
-    if (stream.status() != QDataStream::Ok) {
-        file.close();
-        QFile::remove(path);
-        return false;
-    }
-
-    *peaks = loaded;
-    rememberWaveform(key, loaded);
-    return true;
-}
-
-void MainWindow::saveWaveformCache(const QUrl &url, qint64 duration,
-                                   const QVector<float> &peaks) {
-    if (!url.isValid() || duration <= 0 || peaks.isEmpty() || peaks.size() > 2048) return;
-    for (float value : peaks)
-        if (!std::isfinite(value)) return;
-    const QString key = waveformCacheKey(url, duration);
-    rememberWaveform(key, peaks);
-
-    const QString dirPath = waveformCacheDir();
-    if (!QDir().mkpath(dirPath)) return;
-    QSaveFile file(dirPath + "/" + key + ".wfc");
-    if (!file.open(QIODevice::WriteOnly)) return;
-
-    QDataStream stream(&file);
-    stream.setVersion(QDataStream::Qt_6_0);
-    stream.setFloatingPointPrecision(QDataStream::SinglePrecision);
-    stream << quint32(0x45425746u) << quint16(1) << duration << quint32(peaks.size());
-    for (float value : peaks) stream << qBound(0.0f, value, 1.0f);
-    if (stream.status() != QDataStream::Ok || !file.commit()) return;
-
-    // Не даём дисковому кэшу расти бесконечно: 2048 форм волн занимают
-    // всего несколько мегабайт и покрывают большую медиатеку.
-    const QFileInfoList files = QDir(dirPath).entryInfoList(
-        QStringList() << "*.wfc", QDir::Files, QDir::Time);
-    for (int i = 2048; i < files.size(); ++i) QFile::remove(files[i].absoluteFilePath());
-}
-
 void MainWindow::onWaveformReady(const QUrl &url, qint64 duration,
                                  QVector<float> peaks) {
-    saveWaveformCache(url, duration, peaks);
+    m_waveformCache.save(url, duration, peaks);
     if (m_player->source() == url) applyWaveformPeaks(peaks);
 }
 
@@ -3751,8 +3683,10 @@ void MainWindow::checkForUpdates(bool manual) {
             }
             QPushButton#updatePrimary:hover { background-color: ACCENT_HOVER; }
         )";
-        dialogStyle.replace("ACCENT_HOVER", m_cfg.accentColor.lighter(112).name());
-        dialogStyle.replace("ACCENT", m_cfg.accentColor.name());
+        const ThemePalette updateTheme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+        ThemeManager::applyPaletteTokens(dialogStyle, updateTheme);
+        dialogStyle.replace("ACCENT_HOVER", updateTheme.accent.lighter(112).name());
+        dialogStyle.replace("ACCENT", updateTheme.accent.name());
         dialog.setStyleSheet(dialogStyle);
 
         connect(laterButton, &QPushButton::clicked, &dialog, &QDialog::reject);

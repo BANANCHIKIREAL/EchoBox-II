@@ -109,6 +109,7 @@ void WaveformSlider::clearWaveform() {
 
 void WaveformSlider::setAccentColor(const QColor &c) { m_accent = c; update(); }
 void WaveformSlider::setTrackColor (const QColor &c) { m_track  = c; update(); }
+void WaveformSlider::setBackgroundColor(const QColor &c) { m_background = c; update(); }
 
 // ── Background decoder slots ─────────────────────────────────────────────────
 
@@ -188,7 +189,7 @@ void WaveformSlider::paintEvent(QPaintEvent *) {
 
     // Background
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0x1e, 0x1e, 0x2e));
+    p.setBrush(m_background);
     p.drawRoundedRect(rect(), 6, 6);
 
     const float progress = (m_max > m_min)

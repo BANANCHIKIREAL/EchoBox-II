@@ -5,20 +5,16 @@
 #include <QtMath>
 #include <cstdlib>
 
-// Catppuccin Mocha accent palette
-static const QColor kPalette[] = {
-    { 0x89, 0xb4, 0xfa },  // Sapphire
-    { 0xcb, 0xa6, 0xf7 },  // Mauve
-    { 0x94, 0xe2, 0xd5 },  // Teal
-    { 0xf3, 0x8b, 0xa8 },  // Pink
-    { 0xfa, 0xb3, 0x87 },  // Peach
-    { 0x89, 0xdc, 0xeb },  // Sky
-    { 0xa6, 0xe3, 0xa1 },  // Green
-};
 static constexpr int kPaletteSize = 7;
 
 AuroraWidget::AuroraWidget(QWidget *parent) : QWidget(parent)
 {
+    m_themeColors = {
+        QColor(0x89, 0xb4, 0xfa), QColor(0xcb, 0xa6, 0xf7),
+        QColor(0x94, 0xe2, 0xd5), QColor(0xf3, 0x8b, 0xa8),
+        QColor(0xfa, 0xb3, 0x87), QColor(0x89, 0xdc, 0xeb),
+        QColor(0xa6, 0xe3, 0xa1)
+    };
     setAttribute(Qt::WA_StyledBackground, false);
     setAutoFillBackground(false);
     std::srand(12345);
@@ -27,6 +23,18 @@ AuroraWidget::AuroraWidget(QWidget *parent) : QWidget(parent)
     m_timer->setInterval(20);
     connect(m_timer, &QTimer::timeout, this, &AuroraWidget::tick);
     m_timer->start();
+}
+
+void AuroraWidget::setThemeColors(const QColor &top, const QColor &middle,
+                                  const QColor &bottom,
+                                  const QVector<QColor> &accents) {
+    m_baseTop = top;
+    m_baseMiddle = middle;
+    m_baseBottom = bottom;
+    if (!accents.isEmpty()) m_themeColors = accents;
+    for (auto &particle : m_particles)
+        particle.colorIdx %= qMax(1, m_themeColors.size());
+    update();
 }
 
 void AuroraWidget::setAmplitude(float amp)
@@ -99,9 +107,9 @@ void AuroraWidget::paintEvent(QPaintEvent *)
 
     // ── Deep gradient base ────────────────────────────────────────────────────
     QLinearGradient base(0, 0, 0, H);
-    base.setColorAt(0.0, QColor(0x10, 0x10, 0x1c));
-    base.setColorAt(0.5, QColor(0x18, 0x18, 0x25));
-    base.setColorAt(1.0, QColor(0x0c, 0x0c, 0x16));
+    base.setColorAt(0.0, m_baseTop);
+    base.setColorAt(0.5, m_baseMiddle);
+    base.setColorAt(1.0, m_baseBottom);
     p.fillRect(rect(), base);
 
     // ── Blobs ─────────────────────────────────────────────────────────────────
@@ -111,26 +119,26 @@ void AuroraWidget::paintEvent(QPaintEvent *)
         float fx, fy;       // motion frequency
         float px, py;       // phase offset
         float radius;       // fraction of W
-        int   r, g, b, a;
+        int   colorIdx, a;
         float reactivity;   // response to beat/amp
     };
 
     static const Blob blobs[] = {
         // 4 large slow base blobs
-        { 0.18f, 0.28f,  0.13f,0.16f,  0.52f,0.40f,  0.00f,0.00f,  0.58f,  0x89,0xb4,0xfa, 52, 0.7f },
-        { 0.76f, 0.58f,  0.11f,0.13f,  0.57f,0.48f,  1.57f,0.80f,  0.54f,  0xcb,0xa6,0xf7, 50, 0.8f },
-        { 0.48f, 0.82f,  0.09f,0.11f,  0.65f,0.60f,  3.14f,1.60f,  0.50f,  0x94,0xe2,0xd5, 38, 0.6f },
-        { 0.86f, 0.14f,  0.08f,0.10f,  0.48f,0.43f,  4.71f,2.40f,  0.46f,  0xf3,0x8b,0xa8, 32, 0.6f },
+        { 0.18f, 0.28f,  0.13f,0.16f,  0.52f,0.40f,  0.00f,0.00f,  0.58f,  0, 52, 0.7f },
+        { 0.76f, 0.58f,  0.11f,0.13f,  0.57f,0.48f,  1.57f,0.80f,  0.54f,  1, 50, 0.8f },
+        { 0.48f, 0.82f,  0.09f,0.11f,  0.65f,0.60f,  3.14f,1.60f,  0.50f,  2, 38, 0.6f },
+        { 0.86f, 0.14f,  0.08f,0.10f,  0.48f,0.43f,  4.71f,2.40f,  0.46f,  3, 32, 0.6f },
         // 5 medium blobs
-        { 0.33f, 0.62f,  0.11f,0.13f,  0.88f,0.75f,  2.50f,1.00f,  0.37f,  0xfa,0xb3,0x87, 46, 1.1f },
-        { 0.64f, 0.28f,  0.10f,0.14f,  0.73f,0.82f,  0.70f,3.20f,  0.34f,  0x89,0xdc,0xeb, 42, 1.0f },
-        { 0.14f, 0.74f,  0.09f,0.11f,  1.05f,0.63f,  1.80f,0.50f,  0.31f,  0xa6,0xe3,0xa1, 34, 0.9f },
-        { 0.88f, 0.72f,  0.08f,0.09f,  0.82f,0.70f,  5.50f,1.20f,  0.28f,  0xcb,0xa6,0xf7, 38, 1.0f },
-        { 0.44f, 0.14f,  0.10f,0.12f,  0.92f,0.85f,  0.30f,4.00f,  0.26f,  0x89,0xb4,0xfa, 30, 0.8f },
+        { 0.33f, 0.62f,  0.11f,0.13f,  0.88f,0.75f,  2.50f,1.00f,  0.37f,  4, 46, 1.1f },
+        { 0.64f, 0.28f,  0.10f,0.14f,  0.73f,0.82f,  0.70f,3.20f,  0.34f,  5, 42, 1.0f },
+        { 0.14f, 0.74f,  0.09f,0.11f,  1.05f,0.63f,  1.80f,0.50f,  0.31f,  6, 34, 0.9f },
+        { 0.88f, 0.72f,  0.08f,0.09f,  0.82f,0.70f,  5.50f,1.20f,  0.28f,  1, 38, 1.0f },
+        { 0.44f, 0.14f,  0.10f,0.12f,  0.92f,0.85f,  0.30f,4.00f,  0.26f,  0, 30, 0.8f },
         // 3 small fast accent blobs (most reactive)
-        { 0.24f, 0.44f,  0.15f,0.17f,  1.35f,1.18f,  2.10f,0.90f,  0.19f,  0xf3,0x8b,0xa8, 75, 1.6f },
-        { 0.68f, 0.78f,  0.13f,0.15f,  1.55f,1.32f,  3.80f,2.70f,  0.17f,  0xfa,0xb3,0x87, 68, 1.5f },
-        { 0.54f, 0.50f,  0.12f,0.14f,  1.25f,1.12f,  0.50f,1.40f,  0.20f,  0x94,0xe2,0xd5, 62, 1.4f },
+        { 0.24f, 0.44f,  0.15f,0.17f,  1.35f,1.18f,  2.10f,0.90f,  0.19f,  3, 75, 1.6f },
+        { 0.68f, 0.78f,  0.13f,0.15f,  1.55f,1.32f,  3.80f,2.70f,  0.17f,  4, 68, 1.5f },
+        { 0.54f, 0.50f,  0.12f,0.14f,  1.25f,1.12f,  0.50f,1.40f,  0.20f,  2, 62, 1.4f },
     };
 
     for (const auto &bl : blobs) {
@@ -139,10 +147,11 @@ void AuroraWidget::paintEvent(QPaintEvent *)
         const float br = bl.radius * W * (1.f + (m_amp * 0.28f + m_beat * 0.13f) * bl.reactivity);
         const int   ba = qMin(255, qRound(bl.a * (1.f + m_amp * 0.4f + m_beat * 0.25f)));
 
+        const QColor blob = m_themeColors.value(bl.colorIdx, QColor(0xcb,0xa6,0xf7));
         QRadialGradient g(bx, by, br);
-        g.setColorAt(0.00f, QColor(bl.r, bl.g, bl.b, ba));
-        g.setColorAt(0.40f, QColor(bl.r, bl.g, bl.b, qMax(0, ba / 3)));
-        g.setColorAt(0.75f, QColor(bl.r, bl.g, bl.b, qMax(0, ba / 10)));
+        g.setColorAt(0.00f, QColor(blob.red(), blob.green(), blob.blue(), ba));
+        g.setColorAt(0.40f, QColor(blob.red(), blob.green(), blob.blue(), qMax(0, ba / 3)));
+        g.setColorAt(0.75f, QColor(blob.red(), blob.green(), blob.blue(), qMax(0, ba / 10)));
         g.setColorAt(1.00f, Qt::transparent);
         p.fillRect(rect(), g);
     }
@@ -155,7 +164,7 @@ void AuroraWidget::paintEvent(QPaintEvent *)
         const float py = pt.y * H;
         const float sz = pt.size * (1.f + m_amp * 0.9f + m_beat * 0.4f);
         const float a  = pt.alpha * (0.55f + m_amp * 0.35f + m_beat * 0.25f);
-        QColor col = kPalette[pt.colorIdx];
+        QColor col = m_themeColors.value(pt.colorIdx, QColor(0xcb,0xa6,0xf7));
 
         // Outer halo
         col.setAlphaF(qMin(1.f, a * 0.12f));
@@ -183,15 +192,17 @@ void AuroraWidget::paintEvent(QPaintEvent *)
     // ── Vignette ──────────────────────────────────────────────────────────────
     QRadialGradient vig(W * 0.5f, H * 0.5f, qMax(W, H) * 0.76f);
     vig.setColorAt(0.20f, Qt::transparent);
-    vig.setColorAt(0.62f, QColor(0x08, 0x08, 0x12, 55));
-    vig.setColorAt(1.00f, QColor(0x04, 0x04, 0x0c, 210));
+    vig.setColorAt(0.62f, QColor(m_baseBottom.red(), m_baseBottom.green(), m_baseBottom.blue(), 55));
+    vig.setColorAt(1.00f, QColor(m_baseBottom.red(), m_baseBottom.green(), m_baseBottom.blue(), 210));
     p.fillRect(rect(), vig);
 
     // ── Beat flash: центральная вспышка в такт музыке ─────────────────────────
     if (m_beat > 0.08f) {
         QRadialGradient flash(W * 0.5f, H * 0.42f, qMax(W, H) * 0.55f);
-        flash.setColorAt(0.0f, QColor(0xcb, 0xa6, 0xf7, int(m_beat * 18)));
-        flash.setColorAt(0.5f, QColor(0x89, 0xb4, 0xfa, int(m_beat *  8)));
+        const QColor first = m_themeColors.value(1, QColor(0xcb,0xa6,0xf7));
+        const QColor second = m_themeColors.value(0, QColor(0x89,0xb4,0xfa));
+        flash.setColorAt(0.0f, QColor(first.red(), first.green(), first.blue(), int(m_beat * 18)));
+        flash.setColorAt(0.5f, QColor(second.red(), second.green(), second.blue(), int(m_beat * 8)));
         flash.setColorAt(1.0f, Qt::transparent);
         p.fillRect(rect(), flash);
     }

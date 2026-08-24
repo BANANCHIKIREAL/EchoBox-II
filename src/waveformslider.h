@@ -33,6 +33,7 @@ public:
     // Theme
     void setAccentColor(const QColor &c);
     void setTrackColor (const QColor &c);
+    void setBackgroundColor(const QColor &c);
 
 signals:
     void sliderPressed();
@@ -75,6 +76,7 @@ private:
 
     QColor m_accent { 0xcb, 0xa6, 0xf7 };
     QColor m_track  { 0x45, 0x47, 0x5a };
+    QColor m_background { 0x1e, 0x1e, 0x2e };
 
     int  valueToX(int v)  const;
     int  xToValue(int x)  const;

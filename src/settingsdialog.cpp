@@ -1,5 +1,6 @@
 #include "settingsdialog.h"
 #include "icons.h"
+#include "thememanager.h"
 #include <QListWidget>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -30,6 +31,7 @@
 #include <QDirIterator>
 #include <QMessageBox>
 #include <QSlider>
+#include <QPainter>
 #include <array>
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -206,6 +208,58 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
     l->setContentsMargins(16,12,16,12);
     l->setSpacing(8);
 
+    l->addWidget(makeHead("Тема интерфейса",
+        "Тема меняет всю палитру: фон, панели, меню, плейлист, элементы\n"
+        "управления, визуализатор и форму волны. Применяется сразу."));
+
+    auto themeIcon = [](const ThemePalette &p) {
+        QPixmap pixmap(54, 24);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(p.surface2, 1));
+        painter.setBrush(p.base);
+        painter.drawRoundedRect(QRectF(0.5, 0.5, 53, 23), 6, 6);
+        const QColor colors[] = {p.accent, p.accent2, p.success, p.warm};
+        for (int i = 0; i < 4; ++i) {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(colors[i]);
+            painter.drawEllipse(QPointF(13.0 + i * 10.0, 12.0), 3.4, 3.4);
+        }
+        return QIcon(pixmap);
+    };
+
+    m_themeCombo = new QComboBox(tab);
+    m_themeCombo->setIconSize({54, 24});
+    m_themeCombo->setMinimumWidth(245);
+    for (const ThemeInfo &info : ThemeManager::themes()) {
+        const ThemePalette palette = ThemeManager::palette(info.id);
+        m_themeCombo->addItem(themeIcon(palette), info.name, info.id);
+        m_themeCombo->setItemData(m_themeCombo->count() - 1, info.description, Qt::ToolTipRole);
+    }
+    int themeIndex = m_themeCombo->findData(m_result.theme);
+    m_themeCombo->setCurrentIndex(themeIndex >= 0 ? themeIndex : 0);
+
+    m_themePreview = new QLabel(tab);
+    m_themePreview->setObjectName("themePreview");
+    m_themePreview->setMinimumHeight(38);
+    m_themePreview->setAlignment(Qt::AlignVCenter);
+
+    auto *themeRow = new QHBoxLayout;
+    themeRow->addWidget(m_themeCombo);
+    themeRow->addWidget(m_themePreview, 1);
+    l->addLayout(themeRow);
+    refreshThemePreview();
+
+    connect(m_themeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int index) {
+        if (index < 0 || !m_accentSwatch) return;
+        m_result.theme = m_themeCombo->itemData(index).toString();
+        setAccentPreset(ThemeManager::defaultAccent(m_result.theme));
+        refreshThemePreview();
+        liveApply();
+    });
+
     l->addWidget(makeSep());
 
     // Accent
@@ -218,16 +272,21 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
     m_accentSwatch = new QLabel;
     m_accentSwatch->setFixedSize(34, 34);
     m_accentSwatch->setObjectName("accentSwatch");
+    const ThemePalette initialTheme = ThemeManager::palette(m_result.theme, m_result.accentColor);
     m_accentSwatch->setStyleSheet(
-        QString("background:%1;border-radius:17px;border:2px solid #313244;")
-        .arg(m_result.accentColor.name()));
+        QString("background:%1;border-radius:17px;border:2px solid %2;")
+        .arg(m_result.accentColor.name(), initialTheme.surface0.name()));
     auto *pickBtn = new QPushButton("Выбрать...");
     pickBtn->setFixedHeight(30);
     connect(pickBtn, &QPushButton::clicked, this, &SettingsDialog::pickAccentColor);
     auto *resetBtn = new QPushButton("Сбросить");
     resetBtn->setFixedHeight(30);
     connect(resetBtn, &QPushButton::clicked, this,
-            [this]{ setAccentPreset(QColor(0xcb,0xa6,0xf7)); liveApply(); });
+            [this]{
+        setAccentPreset(ThemeManager::defaultAccent(
+            m_themeCombo ? m_themeCombo->currentData().toString() : m_result.theme));
+        liveApply();
+    });
     accentRow->addWidget(m_accentSwatch);
     accentRow->addWidget(pickBtn);
     accentRow->addWidget(resetBtn);
@@ -771,16 +830,40 @@ void SettingsDialog::pickAccentColor() {
 
 void SettingsDialog::setAccentPreset(const QColor &c) {
     m_result.accentColor = c;
+    const ThemePalette theme = ThemeManager::palette(
+        m_themeCombo ? m_themeCombo->currentData().toString() : m_result.theme, c);
     m_accentSwatch->setStyleSheet(
-        QString("background:%1;border-radius:17px;border:2px solid #313244;").arg(c.name()));
+        QString("background:%1;border-radius:17px;border:2px solid %2;")
+            .arg(c.name(), theme.surface0.name()));
     flashWidget(m_accentSwatch);
     refreshPresetSwatches();
+    refreshThemePreview();
+}
+
+void SettingsDialog::refreshThemePreview() {
+    if (!m_themePreview) return;
+    const QString id = m_themeCombo ? m_themeCombo->currentData().toString() : m_result.theme;
+    const ThemePalette palette = ThemeManager::palette(id, m_result.accentColor);
+    QString description;
+    for (const ThemeInfo &info : ThemeManager::themes())
+        if (info.id == id) { description = info.description; break; }
+    m_themePreview->setText("  " + description);
+    m_themePreview->setStyleSheet(QString(
+        "QLabel#themePreview{color:%1;background:%2;border:1px solid %3;"
+        "border-left:4px solid %4;border-radius:8px;padding:6px 9px;}"
+    ).arg(palette.subtext0.name(), palette.mantle.name(),
+          palette.surface2.name(), palette.accent.name()));
 }
 
 void SettingsDialog::refreshPresetSwatches() {
+    const ThemePalette theme = ThemeManager::palette(
+        m_themeCombo ? m_themeCombo->currentData().toString() : m_result.theme,
+        m_result.accentColor);
     for (int i = 0; i < m_presetBtns.size(); ++i) {
         const bool active = (m_presetColors[i] == m_result.accentColor);
-        const QString border = active ? "3px solid #ffffff" : "1px solid #45475a";
+        const QString border = active
+            ? "3px solid " + theme.text.name()
+            : "1px solid " + theme.surface2.name();
         m_presetBtns[i]->setStyleSheet(
             QString("background:%1;border-radius:14px;border:%2;")
             .arg(m_presetColors[i].name(), border));
@@ -793,7 +876,7 @@ void SettingsDialog::browseFolder(QLineEdit *edit) {
 }
 
 void SettingsDialog::collectResult() {
-    m_result.theme       = "mocha";
+    m_result.theme       = m_themeCombo ? m_themeCombo->currentData().toString() : "mocha";
     m_result.fontSizeIdx = m_fontGroup->checkedId();
     m_result.fontFamily  = m_fontFamilyCombo->currentFont().family();
     // fontFilePath already updated directly in the browse/reset handlers

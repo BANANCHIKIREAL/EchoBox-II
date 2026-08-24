@@ -27,6 +27,7 @@
 #include "backgroundwidget.h"
 #include "libraryscanner.h"
 #include "audioengine.h"
+#include "waveformcache.h"
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
 #include <QAudioBufferOutput>
@@ -207,11 +208,6 @@ private:
     void setCurrentTrackVisual(int index);
     void resetWaveformUi();
     void applyWaveformPeaks(const QVector<float> &peaks);
-    QString waveformCacheKey(const QUrl &url, qint64 duration) const;
-    QString waveformCacheDir() const;
-    bool loadWaveformCache(const QUrl &url, qint64 duration, QVector<float> *peaks);
-    void saveWaveformCache(const QUrl &url, qint64 duration, const QVector<float> &peaks);
-    void rememberWaveform(const QString &key, const QVector<float> &peaks);
 
     // Плавные переходы — общие хелперы, переиспользуются по всему UI
     void fadeInWidget(QWidget *w, int durationMs = 260);
@@ -312,8 +308,7 @@ private:
     // ── Seek ─────────────────────────────────────────────────────────────────
     WaveformSlider *m_seekSlider = nullptr;
     QLabel         *m_timeLabel  = nullptr;
-    QHash<QString, QVector<float>> m_waveformMemoryCache;
-    QStringList                    m_waveformMemoryOrder;
+    WaveformCache m_waveformCache;
 
     // ── Transport controls ───────────────────────────────────────────────────
     QToolButton *m_prevBtn      = nullptr;

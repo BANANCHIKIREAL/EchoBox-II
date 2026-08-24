@@ -86,6 +86,10 @@ QVector<float> Visualizer::computeFFTBands(const float *mono, int count) {
 Visualizer::Visualizer(QWidget *parent) : QWidget(parent) {
     m_h.fill(0.0f, BARS);
     m_t.fill(0.0f, BARS);
+    m_themeColors = {
+        QColor(0x94,0xe2,0xd5), QColor(0x89,0xb4,0xfa),
+        QColor(0xcb,0xa6,0xf7), QColor(0xf3,0x8b,0xa8)
+    };
 
     m_timer = new QTimer(this);
     m_timer->setInterval(30); // ~33 fps
@@ -95,6 +99,13 @@ Visualizer::Visualizer(QWidget *parent) : QWidget(parent) {
     setMinimumHeight(62);
     setMaximumHeight(80);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+}
+
+void Visualizer::setThemeColors(const QColor &background,
+                                const QVector<QColor> &colors) {
+    m_background = background;
+    if (!colors.isEmpty()) m_themeColors = colors;
+    update();
 }
 
 QSize Visualizer::sizeHint() const { return {400, 70}; }
@@ -177,13 +188,15 @@ void Visualizer::paintEvent(QPaintEvent *) {
     const float t  = m_auroraPhase;
 
     // ── Background with subtle aurora ────────────────────────────────────────
-    p.fillRect(rect(), QColor(0x18, 0x18, 0x25));
+    p.fillRect(rect(), m_background);
     {
         QRadialGradient g(W * (0.5f + 0.2f * qSin(t)),
                           H * (0.5f + 0.2f * qCos(t * 0.7f)),
                           W * 0.55f);
-        g.setColorAt(0.0f, QColor(0xcb, 0xa6, 0xf7, 18));
-        g.setColorAt(0.5f, QColor(0x89, 0xb4, 0xfa, 10));
+        const QColor glowA = m_themeColors.value(2, QColor(0xcb,0xa6,0xf7));
+        const QColor glowB = m_themeColors.value(1, QColor(0x89,0xb4,0xfa));
+        g.setColorAt(0.0f, QColor(glowA.red(), glowA.green(), glowA.blue(), 18));
+        g.setColorAt(0.5f, QColor(glowB.red(), glowB.green(), glowB.blue(), 10));
         g.setColorAt(1.0f, Qt::transparent);
         p.fillRect(rect(), g);
     }
@@ -197,10 +210,10 @@ void Visualizer::paintEvent(QPaintEvent *) {
 
         // Gradient: teal→blue→mauve→pink based on height
         QLinearGradient grad(x, y + bh, x, y);
-        grad.setColorAt(0.00f, QColor(0x94, 0xe2, 0xd5)); // teal
-        grad.setColorAt(0.45f, QColor(0x89, 0xb4, 0xfa)); // blue
-        grad.setColorAt(0.80f, QColor(0xcb, 0xa6, 0xf7)); // mauve
-        grad.setColorAt(1.00f, QColor(0xf3, 0x8b, 0xa8)); // pink at top
+        grad.setColorAt(0.00f, m_themeColors.value(0, QColor(0x94,0xe2,0xd5)));
+        grad.setColorAt(0.45f, m_themeColors.value(1, QColor(0x89,0xb4,0xfa)));
+        grad.setColorAt(0.80f, m_themeColors.value(2, QColor(0xcb,0xa6,0xf7)));
+        grad.setColorAt(1.00f, m_themeColors.value(3, QColor(0xf3,0x8b,0xa8)));
 
         p.setBrush(grad);
         p.setPen(Qt::NoPen);
@@ -221,7 +234,8 @@ void Visualizer::paintEvent(QPaintEvent *) {
         const float x   = i * bw + gap * 0.5f;
         const float fw  = bw - gap;
         QLinearGradient ref(x, H, x, H - bh);
-        ref.setColorAt(0.0f, QColor(0x89, 0xb4, 0xfa, 120));
+        const QColor reflection = m_themeColors.value(1, QColor(0x89,0xb4,0xfa));
+        ref.setColorAt(0.0f, QColor(reflection.red(), reflection.green(), reflection.blue(), 120));
         ref.setColorAt(1.0f, Qt::transparent);
         p.fillRect(QRectF(x, H - bh, fw, bh), ref);
     }
