@@ -52,7 +52,8 @@
 #include <QPainterPath>
 #include <QLinearGradient>
 #include <QTextStream>
-#include <QTextDocumentFragment>
+#include <QTextBrowser>
+#include <QTextDocument>
 #include <QRegularExpression>
 #include <QDir>
 #include <QStyledItemDelegate>
@@ -1500,6 +1501,10 @@ void MainWindow::loadSettings() {
     // через диспетчер задач/параметры Windows
     m_cfg.launchOnStartup  = isLaunchOnStartupEnabled();
 
+    const bool alwaysOnTop = m_settings.value("view/alwaysOnTop", false).toBool();
+    setWindowFlag(Qt::WindowStaysOnTopHint, alwaysOnTop);
+    if (m_alwaysOnTopAct) m_alwaysOnTopAct->setChecked(alwaysOnTop);
+
     m_eqEngine->setEqEnabled(m_cfg.eqEnabled);
     for (int i = 0; i < kEqBandCount; ++i)
         m_eqEngine->setEqBandGain(i, m_cfg.eqBands[i]);
@@ -1542,6 +1547,8 @@ void MainWindow::saveSettings() {
     m_settings.setValue("cfg/seekStepSecs",        m_cfg.seekStepSecs);
     m_settings.setValue("cfg/volumeStep",          m_cfg.volumeStep);
     m_settings.setValue("cfg/eqEnabled",           m_cfg.eqEnabled);
+    m_settings.setValue("view/alwaysOnTop",
+                        windowFlags().testFlag(Qt::WindowStaysOnTopHint));
     for (int i = 0; i < kEqBandCount; ++i)
         m_settings.setValue(QString("cfg/eqBand%1").arg(i), m_cfg.eqBands[i]);
     // launchOnStartup не хранится в QSettings — источник истины реестр,
@@ -1983,6 +1990,12 @@ void MainWindow::playTrack(int index) {
 
     m_currentIndex = index;
     const QUrl url = m_playlist[index];
+
+    // Сразу сбрасываем обложку предыдущего трека. У видео метаданные и
+    // thumbnail приходят асинхронно; без этого мини-плеер успевал оставить
+    // картинку от предыдущего аудиофайла (особенно заметно на MP4).
+    m_coverPixmap = QPixmap();
+    updateAlbumArt();
 
     m_playlistWidget->setCurrentRow(index);
     setCurrentTrackVisual(index);
@@ -2659,10 +2672,11 @@ void MainWindow::toggleMiniDock() {
 }
 
 void MainWindow::toggleAlwaysOnTop() {
-    bool on = windowFlags() & Qt::WindowStaysOnTopHint;
-    setWindowFlag(Qt::WindowStaysOnTopHint, !on);
+    const bool enabled = !windowFlags().testFlag(Qt::WindowStaysOnTopHint);
+    setWindowFlag(Qt::WindowStaysOnTopHint, enabled);
     show();
-    if (m_alwaysOnTopAct) m_alwaysOnTopAct->setChecked(!on);
+    if (m_alwaysOnTopAct) m_alwaysOnTopAct->setChecked(enabled);
+    m_settings.setValue("view/alwaysOnTop", enabled);
 }
 
 void MainWindow::toggleRemainingTime() {
@@ -2802,7 +2816,13 @@ void MainWindow::onMetaDataChanged() {
         m_coverPixmap = QPixmap::fromImage(img);
         m_albumArt->setPixmap(applyRoundedCorners(m_coverPixmap, 230, artRadius()));
         if (m_miniAlbumArt) m_miniAlbumArt->setPixmap(applyRoundedCorners(m_coverPixmap, 40, 6));
-        m_mediaStack->setCurrentWidget(m_albumArt);
+        const bool currentIsVideo = m_currentIndex >= 0
+            && m_currentIndex < m_playlist.size()
+            && isVideoFile(m_playlist[m_currentIndex]);
+        // Thumbnail видео нужен мини-плееру и иконке списка, но основное
+        // окно должно продолжать показывать само видео.
+        if (!currentIsVideo)
+            m_mediaStack->setCurrentWidget(m_albumArt);
 
         // Immediately set track icon for the currently playing track
         if (m_currentIndex >= 0 && m_currentIndex < m_playlist.size()) {
@@ -3334,32 +3354,178 @@ void MainWindow::checkForUpdates(bool manual) {
             ? installerUrl
             : (!zipUrl.isEmpty() ? zipUrl : installerUrl);
 
-        QMessageBox box(this);
-        box.setWindowTitle("Доступно обновление");
-        box.setTextFormat(Qt::RichText);
-        box.setTextInteractionFlags(Qt::TextBrowserInteraction);
-        box.setText(QString(
-            "<h3 style='color:#cba6f7'>EchoBox II %1</h3>"
-            "<p>У вас установлена версия %2</p>")
-                .arg(tag.toHtmlEscaped(), kAppVersion.toHtmlEscaped()));
-        if (!notes.isEmpty()) {
-            QString notesMarkdown = notes.left(4000);
-            notesMarkdown.replace(
-                QRegularExpression(
-                    R"(\*\*Full Changelog\*\*:\s*(https?://\S+))",
-                    QRegularExpression::CaseInsensitiveOption),
-                QStringLiteral("[Полный список изменений](\\1)"));
-            const QString notesHtml = QTextDocumentFragment::fromMarkdown(
-                notesMarkdown, QTextDocument::MarkdownDialectGitHub).toHtml();
-            box.setInformativeText(notesHtml);
-        }
-        QPushButton *actionBtn = box.addButton(
-            assetUrl.isEmpty() ? "Скачать со страницы релиза" : "Установить",
-            QMessageBox::AcceptRole);
-        box.addButton(manual ? "Закрыть" : "Пропустить эту версию", QMessageBox::RejectRole);
-        box.exec();
+        QDialog dialog(this);
+        dialog.setObjectName("updateDialog");
+        dialog.setWindowTitle("Доступно обновление");
+        dialog.setWindowIcon(QIcon(createLogo(64)));
+        dialog.setModal(true);
+        dialog.setFixedWidth(560);
+        dialog.setWindowFlag(Qt::WindowContextHelpButtonHint, false);
 
-        if (box.clickedButton() == actionBtn) {
+        auto *root = new QVBoxLayout(&dialog);
+        root->setContentsMargins(28, 26, 28, 24);
+        root->setSpacing(18);
+
+        auto *header = new QHBoxLayout;
+        header->setSpacing(16);
+        auto *logo = new QLabel(&dialog);
+        logo->setFixedSize(64, 64);
+        logo->setPixmap(createLogo(64));
+        header->addWidget(logo, 0, Qt::AlignTop);
+
+        auto *heading = new QVBoxLayout;
+        heading->setSpacing(4);
+        auto *badge = new QLabel("  НОВАЯ ВЕРСИЯ  ", &dialog);
+        badge->setObjectName("updateBadge");
+        badge->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+        auto *titleLabel = new QLabel("Обновление EchoBox II", &dialog);
+        titleLabel->setObjectName("updateTitle");
+        auto *subtitleLabel = new QLabel(
+            "Новая версия уже готова к установке", &dialog);
+        subtitleLabel->setObjectName("updateSubtitle");
+        heading->addWidget(badge, 0, Qt::AlignLeft);
+        heading->addWidget(titleLabel);
+        heading->addWidget(subtitleLabel);
+        header->addLayout(heading, 1);
+        root->addLayout(header);
+
+        auto *versionCard = new QFrame(&dialog);
+        versionCard->setObjectName("updateVersionCard");
+        auto *versionLayout = new QHBoxLayout(versionCard);
+        versionLayout->setContentsMargins(18, 13, 18, 13);
+        auto *currentVersion = new QLabel(
+            "Установлена  <b>" + kAppVersion.toHtmlEscaped() + "</b>", versionCard);
+        currentVersion->setTextFormat(Qt::RichText);
+        auto *arrow = new QLabel(QString::fromUtf8("→"), versionCard);
+        arrow->setObjectName("updateArrow");
+        auto *newVersion = new QLabel(
+            "Доступна  <b>" + tag.toHtmlEscaped() + "</b>", versionCard);
+        newVersion->setTextFormat(Qt::RichText);
+        versionLayout->addWidget(currentVersion);
+        versionLayout->addStretch();
+        versionLayout->addWidget(arrow);
+        versionLayout->addStretch();
+        versionLayout->addWidget(newVersion);
+        root->addWidget(versionCard);
+
+        auto *notesTitle = new QLabel("Что изменилось", &dialog);
+        notesTitle->setObjectName("updateNotesTitle");
+        root->addWidget(notesTitle);
+
+        auto *notesView = new QTextBrowser(&dialog);
+        notesView->setObjectName("updateNotes");
+        notesView->setOpenExternalLinks(true);
+        notesView->setMinimumHeight(110);
+        notesView->setMaximumHeight(190);
+        notesView->document()->setDefaultStyleSheet(QString(
+            "a { color: %1; text-decoration: none; } "
+            "p { margin: 3px 0 8px 0; } li { margin-bottom: 4px; }")
+                .arg(m_cfg.accentColor.name()));
+        QString notesMarkdown = notes.left(4000);
+        notesMarkdown.replace(
+            QRegularExpression(
+                R"(\*\*Full Changelog\*\*:\s*(https?://\S+))",
+                QRegularExpression::CaseInsensitiveOption),
+            QStringLiteral("[Полный список изменений](\\1)"));
+        notesView->setMarkdown(notesMarkdown.isEmpty()
+            ? QStringLiteral("Небольшие улучшения и исправления ошибок.")
+            : notesMarkdown);
+        root->addWidget(notesView);
+
+        if (!url.isEmpty()) {
+            auto *releaseLink = new QLabel(
+                QString("<a style=\"color:%1;text-decoration:none\" href=\"%2\">"
+                        "Открыть страницу релиза ↗</a>")
+                    .arg(m_cfg.accentColor.name(), url.toHtmlEscaped()), &dialog);
+            releaseLink->setObjectName("updateReleaseLink");
+            releaseLink->setTextFormat(Qt::RichText);
+            releaseLink->setTextInteractionFlags(Qt::TextBrowserInteraction);
+            releaseLink->setOpenExternalLinks(true);
+            root->addWidget(releaseLink);
+        }
+
+        auto *buttons = new QHBoxLayout;
+        buttons->setSpacing(10);
+        buttons->addStretch();
+        auto *laterButton = new QPushButton(
+            manual ? "Закрыть" : "Пропустить версию", &dialog);
+        laterButton->setObjectName("updateSecondary");
+        auto *installButton = new QPushButton(
+            assetUrl.isEmpty() ? "Открыть страницу" : "Установить обновление", &dialog);
+        installButton->setObjectName("updatePrimary");
+        installButton->setDefault(true);
+        buttons->addWidget(laterButton);
+        buttons->addWidget(installButton);
+        root->addLayout(buttons);
+
+        QString dialogStyle = R"(
+            QDialog#updateDialog {
+                background-color: #181825;
+                border: 1px solid #45475a;
+            }
+            QLabel { color: #cdd6f4; }
+            QLabel#updateBadge {
+                color: #181825;
+                background-color: ACCENT;
+                border-radius: 8px;
+                padding: 3px 7px;
+                font-size: 10px;
+                font-weight: 800;
+            }
+            QLabel#updateTitle { color: #f5e0dc; font-size: 22px; font-weight: 700; }
+            QLabel#updateSubtitle { color: #a6adc8; font-size: 12px; }
+            QFrame#updateVersionCard {
+                background-color: #1e1e2e;
+                border: 1px solid #313244;
+                border-radius: 12px;
+            }
+            QLabel#updateArrow { color: ACCENT; font-size: 22px; font-weight: 700; }
+            QLabel#updateNotesTitle { color: #f5e0dc; font-size: 14px; font-weight: 700; }
+            QTextBrowser#updateNotes {
+                color: #cdd6f4;
+                background-color: #11111b;
+                border: 1px solid #313244;
+                border-radius: 10px;
+                padding: 10px 12px;
+                selection-background-color: ACCENT;
+            }
+            QTextBrowser#updateNotes a, QLabel#updateReleaseLink a { color: ACCENT; }
+            QLabel#updateReleaseLink { color: ACCENT; font-size: 11px; }
+            QPushButton {
+                min-height: 38px;
+                padding: 0 18px;
+                border-radius: 9px;
+                font-weight: 600;
+            }
+            QPushButton#updateSecondary {
+                color: #cdd6f4;
+                background-color: #313244;
+                border: 1px solid #45475a;
+            }
+            QPushButton#updateSecondary:hover { background-color: #45475a; }
+            QPushButton#updatePrimary {
+                color: #181825;
+                background-color: ACCENT;
+                border: 1px solid ACCENT;
+            }
+            QPushButton#updatePrimary:hover { background-color: ACCENT_HOVER; }
+        )";
+        dialogStyle.replace("ACCENT_HOVER", m_cfg.accentColor.lighter(112).name());
+        dialogStyle.replace("ACCENT", m_cfg.accentColor.name());
+        dialog.setStyleSheet(dialogStyle);
+
+        connect(laterButton, &QPushButton::clicked, &dialog, &QDialog::reject);
+        connect(installButton, &QPushButton::clicked, &dialog, &QDialog::accept);
+
+        dialog.setWindowOpacity(0.0);
+        auto *fade = new QPropertyAnimation(&dialog, "windowOpacity", &dialog);
+        fade->setDuration(260);
+        fade->setStartValue(0.0);
+        fade->setEndValue(1.0);
+        fade->setEasingCurve(QEasingCurve::OutCubic);
+        QTimer::singleShot(0, &dialog, [fade]{ fade->start(QAbstractAnimation::DeleteWhenStopped); });
+
+        if (dialog.exec() == QDialog::Accepted) {
             if (!assetUrl.isEmpty()) downloadAndInstallUpdate(assetUrl, tag);
             else                     QDesktopServices::openUrl(QUrl(url));
         } else if (!manual) {
