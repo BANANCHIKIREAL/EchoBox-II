@@ -63,6 +63,8 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QFile>
+#include <QSaveFile>
+#include <QDataStream>
 #include <QCryptographicHash>
 #include <QTimer>
 #include <QAudioSink>
@@ -923,9 +925,14 @@ void MainWindow::setupConnections() {
         playerSeek(m_seekSlider->value());
         m_seeking = false;
     });
-    // Share peaks and keep mini waveform in sync
-    connect(m_seekSlider, &WaveformSlider::peaksReady, m_miniWaveform, &WaveformSlider::setPeaks);
-    connect(m_seekSlider, &WaveformSlider::peaksReady, this, &MainWindow::onWaveformPeaksReady);
+    // Share peaks with the mini player only while they still belong to the
+    // currently playing source. A finished waveform is persisted separately.
+    connect(m_seekSlider, &WaveformSlider::peaksReady, this,
+            [this](const QUrl &url, const QVector<float> &peaks) {
+        if (m_player->source() == url) m_miniWaveform->setPeaks(peaks);
+    });
+    connect(m_seekSlider, &WaveformSlider::waveformReady,
+            this, &MainWindow::onWaveformReady);
     connect(m_miniWaveform, &WaveformSlider::sliderPressed,  [this]{ m_seeking = true; });
     connect(m_miniWaveform, &WaveformSlider::sliderReleased, [this]{
         playerSeek(m_miniWaveform->value());
@@ -1800,9 +1807,7 @@ void MainWindow::clearPlaylist() {
     m_titleLabel->setText("EchoBox II");
     m_artistLabel->setText("Перетащи файлы или открой через меню Файл");
     m_albumLabel->setText("");
-    m_seekSlider->clearWaveform();
-    m_seekSlider->setValue(0); m_seekSlider->setRange(0, 0);
-    m_timeLabel->setText("0:00 / 0:00");
+    resetWaveformUi();
     setWindowTitle("EchoBox II");
     updatePlaylistInfo();
     m_coverPixmap = QPixmap();
@@ -2082,6 +2087,7 @@ void MainWindow::playTrack(int index) {
 
     m_currentIndex = index;
     const QUrl url = m_playlist[index];
+    resetWaveformUi();
 
     // Сразу сбрасываем обложку предыдущего трека. У видео метаданные и
     // thumbnail приходят асинхронно; без этого мини-плеер успевал оставить
@@ -2783,13 +2789,11 @@ void MainWindow::onDurationChanged(qint64 duration) {
     m_miniWaveform->setRange(0, static_cast<int>(duration));
     if (duration > 0) {
         const QUrl src = m_player->source();
-        const auto cached = m_waveformCache.constFind(src);
-        if (cached != m_waveformCache.constEnd()) {
-            // Уже decoded в этой сессии — не гонять декодер по новой
-            m_seekSlider->setPeaks(cached.value());
-            m_miniWaveform->setPeaks(cached.value());
+        QVector<float> cached;
+        if (loadWaveformCache(src, duration, &cached)) {
+            applyWaveformPeaks(cached);
         } else {
-            m_waveformLoadingUrl = src;
+            m_miniWaveform->clearWaveform();
             m_seekSlider->loadWaveform(src, duration);
         }
     }
@@ -2802,11 +2806,145 @@ void MainWindow::onDurationChanged(qint64 duration) {
     }
 }
 
-void MainWindow::onWaveformPeaksReady(QVector<float> peaks) {
-    // peaksReady стреляет и промежуточными, и финальными пиками — просто
-    // перезаписываем, последний вызов при декодировании всегда самый полный
-    if (m_waveformLoadingUrl.isValid())
-        m_waveformCache[m_waveformLoadingUrl] = peaks;
+void MainWindow::applyWaveformPeaks(const QVector<float> &peaks) {
+    m_seekSlider->setPeaks(peaks);
+    m_miniWaveform->setPeaks(peaks);
+}
+
+void MainWindow::resetWaveformUi() {
+    m_seekSlider->clearWaveform();
+    m_miniWaveform->clearWaveform();
+    m_seekSlider->setValue(0);
+    m_seekSlider->setRange(0, 0);
+    m_miniWaveform->setValue(0);
+    m_miniWaveform->setRange(0, 0);
+    m_timeLabel->setText("0:00 / 0:00");
+}
+
+QString MainWindow::waveformCacheDir() const {
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/waveforms";
+}
+
+QString MainWindow::waveformCacheKey(const QUrl &url, qint64 duration) const {
+    QByteArray identity = url.toEncoded(QUrl::FullyEncoded);
+    if (url.isLocalFile()) {
+        const QFileInfo info(url.toLocalFile());
+        const QString path = info.canonicalFilePath().isEmpty()
+            ? info.absoluteFilePath() : info.canonicalFilePath();
+        identity += "\npath=";
+        identity += path.toUtf8();
+        identity += "\nsize=";
+        identity += QByteArray::number(info.size());
+        identity += "\nmodified=";
+        identity += QByteArray::number(info.lastModified().toMSecsSinceEpoch());
+    }
+    // Округление до секунды не создаёт промах кэша из-за мелкой разницы,
+    // с которой разные мультимедийные бэкенды могут сообщать длительность.
+    identity += "\nduration=";
+    identity += QByteArray::number((duration + 500) / 1000);
+    return QString::fromLatin1(
+        QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
+}
+
+void MainWindow::rememberWaveform(const QString &key, const QVector<float> &peaks) {
+    if (key.isEmpty() || peaks.isEmpty()) return;
+    m_waveformMemoryOrder.removeAll(key);
+    m_waveformMemoryOrder.append(key);
+    m_waveformMemoryCache.insert(key, peaks);
+
+    // 12 форм волн занимают примерно 24 КБ при 500 float-пиках на трек.
+    // Остальные остаются на диске и подгружаются по требованию.
+    while (m_waveformMemoryOrder.size() > 12) {
+        const QString oldest = m_waveformMemoryOrder.takeFirst();
+        m_waveformMemoryCache.remove(oldest);
+    }
+}
+
+bool MainWindow::loadWaveformCache(const QUrl &url, qint64 duration,
+                                   QVector<float> *peaks) {
+    if (!peaks || !url.isValid() || duration <= 0) return false;
+    const QString key = waveformCacheKey(url, duration);
+    const auto memory = m_waveformMemoryCache.constFind(key);
+    if (memory != m_waveformMemoryCache.constEnd()) {
+        *peaks = memory.value();
+        m_waveformMemoryOrder.removeAll(key);
+        m_waveformMemoryOrder.append(key);
+        return true;
+    }
+
+    const QString path = waveformCacheDir() + "/" + key + ".wfc";
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return false;
+
+    QDataStream stream(&file);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream.setFloatingPointPrecision(QDataStream::SinglePrecision);
+    quint32 magic = 0;
+    quint16 version = 0;
+    qint64 cachedDuration = 0;
+    quint32 count = 0;
+    stream >> magic >> version >> cachedDuration >> count;
+    if (magic != 0x45425746u || version != 1 || count == 0 || count > 2048 ||
+        qAbs(cachedDuration - duration) > 1500) {
+        file.close();
+        QFile::remove(path);
+        return false;
+    }
+
+    QVector<float> loaded;
+    loaded.reserve(int(count));
+    for (quint32 i = 0; i < count; ++i) {
+        float value = 0.0f;
+        stream >> value;
+        if (!std::isfinite(value) || value < 0.0f || value > 1.0f) {
+            file.close();
+            QFile::remove(path);
+            return false;
+        }
+        loaded.append(value);
+    }
+    if (stream.status() != QDataStream::Ok) {
+        file.close();
+        QFile::remove(path);
+        return false;
+    }
+
+    *peaks = loaded;
+    rememberWaveform(key, loaded);
+    return true;
+}
+
+void MainWindow::saveWaveformCache(const QUrl &url, qint64 duration,
+                                   const QVector<float> &peaks) {
+    if (!url.isValid() || duration <= 0 || peaks.isEmpty() || peaks.size() > 2048) return;
+    for (float value : peaks)
+        if (!std::isfinite(value)) return;
+    const QString key = waveformCacheKey(url, duration);
+    rememberWaveform(key, peaks);
+
+    const QString dirPath = waveformCacheDir();
+    if (!QDir().mkpath(dirPath)) return;
+    QSaveFile file(dirPath + "/" + key + ".wfc");
+    if (!file.open(QIODevice::WriteOnly)) return;
+
+    QDataStream stream(&file);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream.setFloatingPointPrecision(QDataStream::SinglePrecision);
+    stream << quint32(0x45425746u) << quint16(1) << duration << quint32(peaks.size());
+    for (float value : peaks) stream << qBound(0.0f, value, 1.0f);
+    if (stream.status() != QDataStream::Ok || !file.commit()) return;
+
+    // Не даём дисковому кэшу расти бесконечно: 2048 форм волн занимают
+    // всего несколько мегабайт и покрывают большую медиатеку.
+    const QFileInfoList files = QDir(dirPath).entryInfoList(
+        QStringList() << "*.wfc", QDir::Files, QDir::Time);
+    for (int i = 2048; i < files.size(); ++i) QFile::remove(files[i].absoluteFilePath());
+}
+
+void MainWindow::onWaveformReady(const QUrl &url, qint64 duration,
+                                 QVector<float> peaks) {
+    saveWaveformCache(url, duration, peaks);
+    if (m_player->source() == url) applyWaveformPeaks(peaks);
 }
 
 void MainWindow::onPositionChanged(qint64 position) {
@@ -3897,13 +4035,7 @@ void MainWindow::loadPlaylistState(int index) {
         setCurrentTrackVisual(m_currentIndex);
 
     updatePlaylistInfo();
-    m_seekSlider->clearWaveform();
-    m_miniWaveform->clearWaveform();
-    m_seekSlider->setValue(0);
-    m_seekSlider->setRange(0, 0);
-    m_miniWaveform->setValue(0);
-    m_miniWaveform->setRange(0, 0);
-    m_timeLabel->setText("0:00 / 0:00");
+    resetWaveformUi();
     m_coverPixmap = QPixmap();
     updateAlbumArt();
 

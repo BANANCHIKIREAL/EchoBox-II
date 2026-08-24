@@ -49,6 +49,7 @@ void WaveformSlider::loadWaveform(const QUrl &url, qint64 durationMs) {
     clearWaveform();
     if (!url.isValid() || durationMs <= 0) return;
 
+    m_waveformUrl   = url;
     m_durationMs    = durationMs;
     m_bins          = TARGET_BINS;
     m_peaks.assign(m_bins, 0.f);
@@ -94,6 +95,7 @@ void WaveformSlider::setPeaks(const QVector<float> &peaks) {
 
 void WaveformSlider::clearWaveform() {
     if (m_loader) m_loader->stop();
+    m_waveformUrl = QUrl();
     m_peaks.clear();
     m_binsFilled    = 0;
     m_binAccum      = 0.f;
@@ -144,7 +146,8 @@ void WaveformSlider::onAudioBuffer(const QAudioBuffer &buf) {
 
     // Send partial peaks to mini slider every 25 bins so it updates progressively
     if (m_binsFilled != prevFilled && (m_binsFilled % 25 == 0 || m_binsFilled == m_bins))
-        emit peaksReady(QVector<float>(m_peaks.begin(), m_peaks.begin() + m_binsFilled));
+        emit peaksReady(m_waveformUrl,
+                        QVector<float>(m_peaks.begin(), m_peaks.begin() + m_binsFilled));
 #else
     Q_UNUSED(buf)
 #endif
@@ -164,7 +167,9 @@ void WaveformSlider::onLoaderStatus(QMediaPlayer::MediaStatus status) {
         m_peaks.resize(m_binsFilled);
         m_loader->stop();
         update();
-        emit peaksReady(QVector<float>(m_peaks.begin(), m_peaks.end()));
+        const QVector<float> completed(m_peaks.begin(), m_peaks.end());
+        emit peaksReady(m_waveformUrl, completed);
+        emit waveformReady(m_waveformUrl, m_durationMs, completed);
     }
 #else
     Q_UNUSED(status)
