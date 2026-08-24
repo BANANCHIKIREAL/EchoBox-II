@@ -251,7 +251,10 @@ private:
     // просто приглушается, когда AudioEngine активен и реально слышим
     AudioEngine *m_eqEngine = nullptr;
     bool         m_eqActive = false;
+    bool         m_eqPending = false;
+    QUrl         m_eqSource;
     void syncEqEngineToCurrentTrack();
+    void stopEqEngine();
     void playerSeek(qint64 ms);
 
     // ── State ────────────────────────────────────────────────────────────────
@@ -288,8 +291,12 @@ private:
     QWidget     *m_loadingBanner = nullptr;
     QProgressBar *m_loadingBar   = nullptr;
     QLabel      *m_loadingText   = nullptr;
+    QLabel      *m_loadingIcon   = nullptr;
+    QLabel      *m_loadingPercent = nullptr;
     QPropertyAnimation *m_loadingAnim = nullptr;   // текущий fade-in/out баннера (для отмены гонок)
+    QWidget     *m_miniLoadingPanel = nullptr;
     QProgressBar *m_miniLoadingBar = nullptr;      // компактный аналог для мини-плеера
+    QLabel      *m_miniLoadingPercent = nullptr;
 
     // ── Visualizer ───────────────────────────────────────────────────────────
     Visualizer *m_visualizer  = nullptr;

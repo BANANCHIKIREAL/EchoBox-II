@@ -232,8 +232,25 @@ MainWindow::MainWindow(QWidget *parent)
     m_player->setAudioOutput(m_audioOutput);
 
     m_eqEngine = new AudioEngine(this);
+    connect(m_eqEngine, &AudioEngine::ready, this, [this]{
+        const QUrl current = m_player->source();
+        const bool stillWanted = m_eqPending && m_cfg.eqEnabled &&
+            current == m_eqSource && current.isLocalFile() && !isVideoFile(current);
+        if (!stillWanted) return;
+
+        m_eqEngine->setPosition(m_player->position());
+        m_eqEngine->setVolume(m_volumeSlider->value() / 100.0f * m_fadeFactor);
+        if (m_player->playbackState() == QMediaPlayer::PlayingState)
+            m_eqEngine->play();
+        m_eqPending = false;
+        m_eqActive = true;
+        applyVolume();
+    });
     connect(m_eqEngine, &AudioEngine::decodeError, this, [this](const QString &msg){
+        if (!m_eqPending && !m_eqActive) return;
+        m_eqPending = false;
         m_eqActive = false;
+        m_eqSource = QUrl();
         applyVolume();
         showCopyableError("Эквалайзер недоступен для этого трека",
             "Не удалось декодировать трек для эквалайзера — играет обычный "
@@ -451,19 +468,39 @@ void MainWindow::setupUi() {
     // ── Баннер загрузки (скачивание трека по ссылке / обновления) ────────────
     m_loadingBanner = new QWidget(this);
     m_loadingBanner->setObjectName("loadingBanner");
-    auto *lbL = new QHBoxLayout(m_loadingBanner);
-    lbL->setContentsMargins(0, 6, 0, 0);
+    auto *lbL = new QVBoxLayout(m_loadingBanner);
+    lbL->setContentsMargins(12, 10, 12, 11);
     lbL->setSpacing(8);
+
+    auto *loadingHeader = new QHBoxLayout;
+    loadingHeader->setContentsMargins(0, 0, 0, 0);
+    loadingHeader->setSpacing(9);
+    m_loadingIcon = new QLabel(QString::fromUtf8("↓"), m_loadingBanner);
+    m_loadingIcon->setObjectName("loadingIcon");
+    m_loadingIcon->setAlignment(Qt::AlignCenter);
+    m_loadingIcon->setFixedSize(26, 26);
+    m_loadingText = new QLabel(m_loadingBanner);
+    m_loadingText->setObjectName("loadingText");
+    m_loadingText->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_loadingText->setTextInteractionFlags(Qt::NoTextInteraction);
+    m_loadingPercent = new QLabel(QString::fromUtf8("•••"), m_loadingBanner);
+    m_loadingPercent->setObjectName("loadingPercent");
+    m_loadingPercent->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_loadingPercent->setMinimumWidth(42);
+    loadingHeader->addWidget(m_loadingIcon);
+    loadingHeader->addWidget(m_loadingText, 1);
+    loadingHeader->addWidget(m_loadingPercent);
+
     m_loadingBar = new QProgressBar(this);
     m_loadingBar->setObjectName("loadingBar");
     m_loadingBar->setRange(0, 0);
     m_loadingBar->setTextVisible(false);
-    m_loadingBar->setFixedSize(90, 6);
-    m_loadingText = new QLabel(this);
-    m_loadingText->setObjectName("loadingText");
+    m_loadingBar->setFixedHeight(9);
+    m_loadingBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    lbL->addLayout(loadingHeader);
     lbL->addWidget(m_loadingBar);
-    lbL->addWidget(m_loadingText, 1);
     m_loadingBanner->setVisible(false);
+    rl->addSpacing(8);
     rl->addWidget(m_loadingBanner);
 
     rl->addStretch(1);
@@ -667,12 +704,28 @@ void MainWindow::setupUi() {
     // Компактный индикатор загрузки — скрыт, пока нет активного скачивания;
     // скрытый виджет в layout не занимает места, так что в обычном режиме
     // мини-панель выглядит как прежде
-    m_miniLoadingBar = new QProgressBar(this);
-    m_miniLoadingBar->setObjectName("loadingBar");
+    m_miniLoadingPanel = new QWidget(this);
+    m_miniLoadingPanel->setObjectName("miniLoadingPanel");
+    auto *miniLoadingLayout = new QHBoxLayout(m_miniLoadingPanel);
+    miniLoadingLayout->setContentsMargins(9, 5, 9, 5);
+    miniLoadingLayout->setSpacing(7);
+    auto *miniLoadingIcon = new QLabel(QString::fromUtf8("↓"), m_miniLoadingPanel);
+    miniLoadingIcon->setObjectName("miniLoadingIcon");
+    miniLoadingIcon->setAlignment(Qt::AlignCenter);
+    miniLoadingIcon->setFixedWidth(14);
+    m_miniLoadingBar = new QProgressBar(m_miniLoadingPanel);
+    m_miniLoadingBar->setObjectName("miniLoadingBar");
     m_miniLoadingBar->setRange(0, 0);
     m_miniLoadingBar->setTextVisible(false);
-    m_miniLoadingBar->setFixedSize(46, 4);
-    m_miniLoadingBar->setVisible(false);
+    m_miniLoadingBar->setFixedSize(82, 6);
+    m_miniLoadingPercent = new QLabel(QString::fromUtf8("•••"), m_miniLoadingPanel);
+    m_miniLoadingPercent->setObjectName("miniLoadingPercent");
+    m_miniLoadingPercent->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_miniLoadingPercent->setFixedWidth(34);
+    miniLoadingLayout->addWidget(miniLoadingIcon);
+    miniLoadingLayout->addWidget(m_miniLoadingBar);
+    miniLoadingLayout->addWidget(m_miniLoadingPercent);
+    m_miniLoadingPanel->setVisible(false);
 
     miniL->addWidget(m_miniAlbumArt);
     miniL->addSpacing(2);
@@ -680,7 +733,7 @@ void MainWindow::setupUi() {
     miniL->addWidget(m_miniPlayBtn);
     miniL->addWidget(miniNext);
     miniL->addWidget(m_miniTitle);
-    miniL->addWidget(m_miniLoadingBar);
+    miniL->addWidget(m_miniLoadingPanel);
     miniL->addWidget(m_miniWaveform, 1);
     miniL->addWidget(m_miniShuffleBtn);
     miniL->addWidget(m_miniRepeatBtn);
@@ -1002,17 +1055,56 @@ void MainWindow::applyTheme() {
         QLabel#playlistInfo{ color: #6c7086; font-size: 11px; padding: 0 6px; }
         QLabel#miniTitle   { color: #cdd6f4; font-size: 13px; font-weight: bold; padding: 0 6px; }
 
+        QWidget#loadingBanner {
+            background-color: rgba(49, 50, 68, 205);
+            border: 1px solid ACCENT;
+            border-radius: 12px;
+        }
+        QLabel#loadingIcon {
+            background-color: ACCENT;
+            color: #1e1e2e;
+            border-radius: 13px;
+            font-size: 17px;
+            font-weight: bold;
+        }
         QLabel#loadingText {
+            color: #cdd6f4;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        QLabel#loadingPercent, QLabel#miniLoadingPercent {
             color: ACCENT;
             font-size: 12px;
+            font-weight: bold;
         }
         QProgressBar#loadingBar {
-            background-color: rgba(255, 255, 255, 20);
+            background-color: #45475a;
+            border: none;
+            border-radius: 4px;
+        }
+        QProgressBar#loadingBar::chunk {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                        stop:0 ACCENT, stop:1 #89b4fa);
+            border-radius: 4px;
+        }
+        QWidget#miniLoadingPanel {
+            background-color: rgba(49, 50, 68, 220);
+            border: 1px solid #45475a;
+            border-radius: 10px;
+        }
+        QLabel#miniLoadingIcon {
+            color: ACCENT;
+            font-size: 15px;
+            font-weight: bold;
+        }
+        QProgressBar#miniLoadingBar {
+            background-color: #45475a;
             border: none;
             border-radius: 3px;
         }
-        QProgressBar#loadingBar::chunk {
-            background-color: ACCENT;
+        QProgressBar#miniLoadingBar::chunk {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                        stop:0 ACCENT, stop:1 #89b4fa);
             border-radius: 3px;
         }
 
@@ -1701,7 +1793,7 @@ void MainWindow::clearPlaylist() {
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
         return;
     m_player->stop();
-    if (m_eqActive) { m_eqEngine->stop(); m_eqActive = false; }
+    stopEqEngine();
     m_playlist.clear();
     m_playlistWidget->clear();
     m_currentIndex = -1;
@@ -2459,7 +2551,7 @@ void MainWindow::togglePlayPause() {
 
 void MainWindow::stop() {
     m_player->stop();
-    if (m_eqActive) { m_eqEngine->stop(); m_eqActive = false; }
+    stopEqEngine();
     popButtonIcon(m_stopBtn);
 }
 
@@ -2515,7 +2607,7 @@ void MainWindow::playNext(bool respectRepeat) {
 
     if (nextIdx >= m_playlist.size()) {
         if (!respectRepeat || m_repeat == RepeatMode::All) nextIdx = 0;
-        else { m_player->stop(); if (m_eqActive) { m_eqEngine->stop(); m_eqActive = false; } return; }
+        else { m_player->stop(); stopEqEngine(); return; }
     }
     playTrack(nextIdx);
 }
@@ -2929,9 +3021,11 @@ void MainWindow::fadeOutWidget(QWidget *w, int durationMs) {
 void MainWindow::showLoadingBanner(const QString &text) {
     m_loadingText->setText(text);
     m_loadingBar->setRange(0, 0);
+    m_loadingPercent->setText(QString::fromUtf8("•••"));
     m_miniLoadingBar->setRange(0, 0);
-    m_miniLoadingBar->setVisible(true);
-    m_miniLoadingBar->setToolTip(text);
+    m_miniLoadingPercent->setText(QString::fromUtf8("•••"));
+    m_miniLoadingPanel->setVisible(true);
+    m_miniLoadingPanel->setToolTip(text);
     // Отменяем незавершённый fade (в т.ч. fade-out от предыдущего hide) —
     // иначе его finished-колбэк потом спрячет баннер, который мы только что показали
     if (m_loadingAnim) { m_loadingAnim->stop(); m_loadingAnim = nullptr; }
@@ -2957,23 +3051,32 @@ void MainWindow::showLoadingBanner(const QString &text) {
 
 void MainWindow::updateLoadingText(const QString &text) {
     if (m_loadingBanner->isVisible()) m_loadingText->setText(text);
-    m_miniLoadingBar->setToolTip(text);
+    m_miniLoadingPanel->setToolTip(text);
 }
 
 void MainWindow::setLoadingProgress(int percent) {
     m_miniLoadingBar->setRange(0, percent < 0 ? 0 : 100);
-    if (percent >= 0) m_miniLoadingBar->setValue(qBound(0, percent, 100));
+    if (percent >= 0) {
+        const int value = qBound(0, percent, 100);
+        m_miniLoadingBar->setValue(value);
+        m_miniLoadingPercent->setText(QString::number(value) + "%");
+    } else {
+        m_miniLoadingPercent->setText(QString::fromUtf8("•••"));
+    }
     if (!m_loadingBanner->isVisible()) return;
     if (percent < 0) {
         m_loadingBar->setRange(0, 0);
+        m_loadingPercent->setText(QString::fromUtf8("•••"));
     } else {
+        const int value = qBound(0, percent, 100);
         m_loadingBar->setRange(0, 100);
-        m_loadingBar->setValue(qBound(0, percent, 100));
+        m_loadingBar->setValue(value);
+        m_loadingPercent->setText(QString::number(value) + "%");
     }
 }
 
 void MainWindow::hideLoadingBanner() {
-    m_miniLoadingBar->setVisible(false);
+    m_miniLoadingPanel->setVisible(false);
     if (!m_loadingBanner->isVisible()) return;
     if (m_loadingAnim) { m_loadingAnim->stop(); m_loadingAnim = nullptr; }
 
@@ -3776,7 +3879,7 @@ void MainWindow::loadPlaylistState(int index) {
     if (index < 0 || index >= m_playlists.size()) return;
 
     m_player->stop();
-    if (m_eqActive) { m_eqEngine->stop(); m_eqActive = false; }
+    stopEqEngine();
     m_playlist     = m_playlists[index].tracks;
     m_currentIndex = m_playlists[index].currentTrack;
 
@@ -3902,22 +4005,32 @@ void MainWindow::playerSeek(qint64 ms) {
     if (m_eqActive) m_eqEngine->setPosition(ms);
 }
 
+void MainWindow::stopEqEngine() {
+    m_eqPending = false;
+    m_eqActive = false;
+    m_eqSource = QUrl();
+    m_eqEngine->stop();
+    applyVolume();
+}
+
 void MainWindow::syncEqEngineToCurrentTrack() {
     const QUrl src = m_player->source();
     const bool wantEq = m_cfg.eqEnabled && !src.isEmpty() &&
                          src.isLocalFile() && !isVideoFile(src);
-    if (wantEq == m_eqActive) return;
-
-    if (wantEq) {
-        m_eqActive = true;
-        m_eqEngine->setSource(src);
-        m_eqEngine->setPosition(m_player->position());
-        if (m_player->playbackState() == QMediaPlayer::PlayingState) m_eqEngine->play();
-    } else {
-        m_eqEngine->stop();
-        m_eqActive = false;
+    if (!wantEq) {
+        if (m_eqActive || m_eqPending) stopEqEngine();
+        return;
     }
-    applyVolume();
+
+    // При повторном применении настроек не запускаем декодирование заново.
+    if (m_eqSource == src && (m_eqActive || m_eqPending)) return;
+
+    // Пока новый трек декодируется, обычный QMediaPlayer остаётся слышимым.
+    // Это исключает тишину на неподдерживаемых/повреждённых файлах.
+    stopEqEngine();
+    m_eqSource = src;
+    m_eqPending = true;
+    m_eqEngine->setSource(src);
 }
 
 // ─── Position memory (Feature 8) ─────────────────────────────────────────────
