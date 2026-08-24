@@ -52,6 +52,8 @@
 #include <QPainterPath>
 #include <QLinearGradient>
 #include <QTextStream>
+#include <QTextDocumentFragment>
+#include <QRegularExpression>
 #include <QDir>
 #include <QStyledItemDelegate>
 #include <QTabBar>
@@ -3335,12 +3337,22 @@ void MainWindow::checkForUpdates(bool manual) {
         QMessageBox box(this);
         box.setWindowTitle("Доступно обновление");
         box.setTextFormat(Qt::RichText);
-        const QString notesHtml = notes.isEmpty() ? QString()
-            : ("<p>" + notes.toHtmlEscaped().left(600).replace("\n", "<br>") + "</p>");
+        box.setTextInteractionFlags(Qt::TextBrowserInteraction);
         box.setText(QString(
             "<h3 style='color:#cba6f7'>EchoBox II %1</h3>"
-            "<p>У вас установлена версия %2</p>%3")
-                .arg(tag, kAppVersion, notesHtml));
+            "<p>У вас установлена версия %2</p>")
+                .arg(tag.toHtmlEscaped(), kAppVersion.toHtmlEscaped()));
+        if (!notes.isEmpty()) {
+            QString notesMarkdown = notes.left(4000);
+            notesMarkdown.replace(
+                QRegularExpression(
+                    R"(\*\*Full Changelog\*\*:\s*(https?://\S+))",
+                    QRegularExpression::CaseInsensitiveOption),
+                QStringLiteral("[Полный список изменений](\\1)"));
+            const QString notesHtml = QTextDocumentFragment::fromMarkdown(
+                notesMarkdown, QTextDocument::MarkdownDialectGitHub).toHtml();
+            box.setInformativeText(notesHtml);
+        }
         QPushButton *actionBtn = box.addButton(
             assetUrl.isEmpty() ? "Скачать со страницы релиза" : "Установить",
             QMessageBox::AcceptRole);
