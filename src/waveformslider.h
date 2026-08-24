@@ -38,7 +38,8 @@ signals:
     void sliderPressed();
     void sliderReleased();
     void valueChanged(int v);
-    void peaksReady(QVector<float> peaks);
+    void peaksReady(QUrl url, QVector<float> peaks);
+    void waveformReady(QUrl url, qint64 durationMs, QVector<float> peaks);
 
 protected:
     void paintEvent(QPaintEvent *)    override;
@@ -66,6 +67,7 @@ private:
     int    m_binCount      = 0;
     int    m_binsFilled    = 0;
     qint64 m_durationMs    = 0;
+    QUrl   m_waveformUrl;
 
     QMediaPlayer       *m_loader    = nullptr;
     QAudioOutput       *m_silence   = nullptr;

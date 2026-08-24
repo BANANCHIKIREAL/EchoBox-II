@@ -128,7 +128,7 @@ private slots:
     void apoTryOpenRing();     // периодически пытается открыть ring-буфер APO
     // Player signals
     void onDurationChanged(qint64 ms);
-    void onWaveformPeaksReady(QVector<float> peaks);
+    void onWaveformReady(const QUrl &url, qint64 duration, QVector<float> peaks);
     void onPositionChanged(qint64 ms);
     void onPlaybackStateChanged(QMediaPlayer::PlaybackState state);
     void onMediaStatusChanged(QMediaPlayer::MediaStatus status);
@@ -205,6 +205,13 @@ private:
     void updatePlaylistInfo();
     void updateTimeDisplay(qint64 pos, qint64 dur);
     void setCurrentTrackVisual(int index);
+    void resetWaveformUi();
+    void applyWaveformPeaks(const QVector<float> &peaks);
+    QString waveformCacheKey(const QUrl &url, qint64 duration) const;
+    QString waveformCacheDir() const;
+    bool loadWaveformCache(const QUrl &url, qint64 duration, QVector<float> *peaks);
+    void saveWaveformCache(const QUrl &url, qint64 duration, const QVector<float> &peaks);
+    void rememberWaveform(const QString &key, const QVector<float> &peaks);
 
     // Плавные переходы — общие хелперы, переиспользуются по всему UI
     void fadeInWidget(QWidget *w, int durationMs = 260);
@@ -305,8 +312,8 @@ private:
     // ── Seek ─────────────────────────────────────────────────────────────────
     WaveformSlider *m_seekSlider = nullptr;
     QLabel         *m_timeLabel  = nullptr;
-    QHash<QUrl, QVector<float>> m_waveformCache;   // не пересчитывать волну повторно за сессию
-    QUrl                        m_waveformLoadingUrl;
+    QHash<QString, QVector<float>> m_waveformMemoryCache;
+    QStringList                    m_waveformMemoryOrder;
 
     // ── Transport controls ───────────────────────────────────────────────────
     QToolButton *m_prevBtn      = nullptr;
