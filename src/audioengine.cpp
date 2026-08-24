@@ -3,6 +3,8 @@
 #include <QAudioSink>
 #include <QAudioBuffer>
 #include <QAudioFormat>
+#include <QAudioDevice>
+#include <QMediaDevices>
 #include <cmath>
 #include <cstring>
 
@@ -11,7 +13,7 @@ const int kEqBandFreqs[kEqBandCount] = {60, 150, 400, 1000, 2400, 6000, 12000, 1
 // ─── BiquadState ─────────────────────────────────────────────────────────────
 
 void BiquadState::setPeaking(float sampleRate, float freq, float gainDb, float q) {
-    if (gainDb == 0.0f) {
+    if (gainDb == 0.0f || sampleRate <= 0.0f || freq >= sampleRate * 0.49f) {
         // Идентичный фильтр — вообще не красит звук (быстрый путь для 0 дБ)
         b0 = 1; b1 = 0; b2 = 0; a1 = 0; a2 = 0;
         return;
@@ -53,10 +55,17 @@ EqPlaybackDevice::EqPlaybackDevice(QObject *parent) : QIODevice(parent) {
 
 void EqPlaybackDevice::setPcm(const QVector<float> &interleavedStereo, int sampleRate) {
     m_pcm = interleavedStereo;
-    m_sampleRate = sampleRate;
+    m_sourceSampleRate = sampleRate;
     m_totalFrames.store(m_pcm.size() / 2);
     m_frameCursor.store(0.0);
     m_filtersInited = false;   // частота дискретизации могла смениться — пересчитать
+}
+
+void EqPlaybackDevice::configureOutput(const QAudioFormat &format) {
+    m_outputSampleRate = format.sampleRate();
+    m_outputChannels = format.channelCount();
+    m_outputSampleFormat = format.sampleFormat();
+    m_filtersInited = false;
 }
 
 void EqPlaybackDevice::setFramePosition(qint64 frame) {
@@ -89,7 +98,7 @@ void EqPlaybackDevice::rebuildFiltersIfNeeded() {
     m_filtersInited = true;
     for (int ch = 0; ch < 2; ++ch)
         for (int b = 0; b < kEqBandCount; ++b)
-            m_filters[ch][b].setPeaking(float(m_sampleRate), float(kEqBandFreqs[b]),
+            m_filters[ch][b].setPeaking(float(m_outputSampleRate), float(kEqBandFreqs[b]),
                                          m_appliedGains[b], 1.0f);
 }
 
@@ -108,36 +117,75 @@ float EqPlaybackDevice::sampleAt(int channel, double frame) const {
 qint64 EqPlaybackDevice::readData(char *data, qint64 maxSize) {
     rebuildFiltersIfNeeded();
 
-    const qint64 bytesPerFrame = 2 * qint64(sizeof(float));
+    int bytesPerSample = 0;
+    switch (m_outputSampleFormat) {
+    case QAudioFormat::UInt8: bytesPerSample = 1; break;
+    case QAudioFormat::Int16: bytesPerSample = 2; break;
+    case QAudioFormat::Int32:
+    case QAudioFormat::Float: bytesPerSample = 4; break;
+    default: return 0;
+    }
+    const qint64 bytesPerFrame = qint64(m_outputChannels) * bytesPerSample;
+    if (bytesPerFrame <= 0) return 0;
     const qint64 framesRequested = maxSize / bytesPerFrame;
-    auto *out = reinterpret_cast<float*>(data);
+    if (framesRequested <= 0) return 0;
+    const int silenceByte = m_outputSampleFormat == QAudioFormat::UInt8 ? 0x80 : 0x00;
 
     const qint64 total = m_totalFrames.load();
     if (total <= 0) {
-        std::memset(data, 0, size_t(framesRequested * bytesPerFrame));
+        std::memset(data, silenceByte, size_t(framesRequested * bytesPerFrame));
         return framesRequested * bytesPerFrame;
     }
 
     const float  volume = m_volume.load();
-    const double rate   = m_rate.load();
+    const double rate = m_rate.load() * double(m_sourceSampleRate) /
+                        double(qMax(1, m_outputSampleRate));
     const bool   eqOn   = m_eqEnabled.load();
     double cursor = m_frameCursor.load();
 
     qint64 framesWritten = 0;
     for (; framesWritten < framesRequested; ++framesWritten) {
         if (cursor >= double(total)) break;   // конец трека — дальше тишина
+        float stereo[2] = {0.0f, 0.0f};
         for (int ch = 0; ch < 2; ++ch) {
             float s = sampleAt(ch, cursor);
             if (eqOn)
                 for (int b = 0; b < kEqBandCount; ++b)
                     s = m_filters[ch][b].process(s);
-            s *= volume;
-            out[framesWritten * 2 + ch] = qBound(-1.0f, s, 1.0f);
+            stereo[ch] = qBound(-1.0f, s * volume, 1.0f);
+        }
+        for (int ch = 0; ch < m_outputChannels; ++ch) {
+            const float sample = m_outputChannels == 1
+                ? (stereo[0] + stereo[1]) * 0.5f
+                : (ch == 0 ? stereo[0] : ch == 1 ? stereo[1] : 0.0f);
+            char *dst = data + framesWritten * bytesPerFrame + ch * bytesPerSample;
+            switch (m_outputSampleFormat) {
+            case QAudioFormat::Float: {
+                std::memcpy(dst, &sample, sizeof(sample));
+                break;
+            }
+            case QAudioFormat::Int16: {
+                const qint16 value = qint16(std::lround(sample * 32767.0f));
+                std::memcpy(dst, &value, sizeof(value));
+                break;
+            }
+            case QAudioFormat::Int32: {
+                const qint32 value = qint32(std::llround(double(sample) * 2147483647.0));
+                std::memcpy(dst, &value, sizeof(value));
+                break;
+            }
+            case QAudioFormat::UInt8: {
+                const quint8 value = quint8(qBound(0, int(std::lround(sample * 127.0f + 128.0f)), 255));
+                std::memcpy(dst, &value, sizeof(value));
+                break;
+            }
+            default: break;
+            }
         }
         cursor += rate;
     }
     if (framesWritten < framesRequested)
-        std::memset(out + framesWritten * 2, 0,
+        std::memset(data + framesWritten * bytesPerFrame, silenceByte,
                     size_t(framesRequested - framesWritten) * bytesPerFrame);
 
     m_frameCursor.store(cursor);
@@ -236,8 +284,19 @@ void AudioEngine::onBufferReady() {
 }
 
 void AudioEngine::onDecodeFinished() {
+    if (m_pcm.isEmpty() || m_sampleRate <= 0) {
+        m_pendingPlay = false;
+        m_pendingSeekMs = -1;
+        emit decodeError("Декодер не вернул звуковые данные для этого файла.");
+        return;
+    }
     m_device->setPcm(m_pcm, m_sampleRate > 0 ? m_sampleRate : 44100);
-    ensureSink(m_sampleRate > 0 ? m_sampleRate : 44100);
+    if (!ensureSink(m_sampleRate)) {
+        m_pendingPlay = false;
+        m_pendingSeekMs = -1;
+        emit decodeError("Устройство вывода звука не поддерживает доступный аудиоформат.");
+        return;
+    }
     emit ready();
 
     if (m_pendingSeekMs >= 0) {
@@ -251,22 +310,39 @@ void AudioEngine::onDecodeFinished() {
 }
 
 void AudioEngine::onDecodeError() {
-    emit decodeError(m_decoder->errorString());
+    const QString details = m_decoder->errorString().trimmed();
+    emit decodeError(details.isEmpty() ? "Неизвестная ошибка декодирования." : details);
 }
 
-void AudioEngine::ensureSink(int sampleRate) {
-    if (m_sink && m_sink->format().sampleRate() == sampleRate) return;
-    if (m_sink) { m_sink->stop(); m_sink->deleteLater(); m_sink = nullptr; }
+bool AudioEngine::ensureSink(int sampleRate) {
+    const QAudioDevice output = QMediaDevices::defaultAudioOutput();
+    if (output.isNull()) return false;
+
     QAudioFormat fmt;
     fmt.setSampleRate(sampleRate);
     fmt.setChannelCount(2);
     fmt.setSampleFormat(QAudioFormat::Float);
-    m_sink = new QAudioSink(fmt, this);
+    if (!output.isFormatSupported(fmt)) fmt = output.preferredFormat();
+    if (!fmt.isValid() || fmt.channelCount() < 1 || fmt.sampleRate() < 1 ||
+        fmt.sampleFormat() == QAudioFormat::Unknown)
+        return false;
+
+    if (m_sink && m_sink->format() == fmt) {
+        m_device->configureOutput(fmt);
+        return true;
+    }
+    if (m_sink) { m_sink->stop(); m_sink->deleteLater(); m_sink = nullptr; }
+    m_device->configureOutput(fmt);
+    m_sink = new QAudioSink(output, fmt, this);
+    return true;
 }
 
 void AudioEngine::play() {
     if (m_device->totalFrames() <= 0) { m_pendingPlay = true; return; }
-    ensureSink(m_sampleRate > 0 ? m_sampleRate : 44100);
+    if (!ensureSink(m_sampleRate > 0 ? m_sampleRate : 44100)) {
+        emit decodeError("Устройство вывода звука недоступно.");
+        return;
+    }
     switch (m_sink->state()) {
     case QAudio::ActiveState: break;
     case QAudio::SuspendedState: m_sink->resume(); break;
@@ -280,7 +356,9 @@ void AudioEngine::pause() {
 
 void AudioEngine::stop() {
     if (m_sink) m_sink->stop();
+    if (m_decoder) m_decoder->stop();
     m_pendingPlay = false;
+    m_pendingSeekMs = -1;
     m_device->setFramePosition(0);
 }
 

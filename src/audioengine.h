@@ -3,6 +3,7 @@
 #include <QUrl>
 #include <QVector>
 #include <QIODevice>
+#include <QAudioFormat>
 #include <atomic>
 
 class QAudioDecoder;
@@ -36,6 +37,7 @@ public:
     explicit EqPlaybackDevice(QObject *parent = nullptr);
 
     void setPcm(const QVector<float> &interleavedStereo, int sampleRate);
+    void configureOutput(const QAudioFormat &format);
     void setFramePosition(qint64 frame);
     qint64 totalFrames() const { return m_totalFrames.load(); }
 
@@ -53,7 +55,10 @@ protected:
 
 private:
     QVector<float> m_pcm;              // interleaved, 2 канала
-    int m_sampleRate = 44100;
+    int m_sourceSampleRate = 44100;
+    int m_outputSampleRate = 44100;
+    int m_outputChannels = 2;
+    QAudioFormat::SampleFormat m_outputSampleFormat = QAudioFormat::Float;
     std::atomic<qint64>  m_totalFrames{0};
     std::atomic<double>  m_frameCursor{0.0};   // точная позиция чтения (дробная — из-за ресемплинга при смене скорости)
 
@@ -115,5 +120,5 @@ private:
     bool   m_pendingPlay   = false;
     qint64 m_pendingSeekMs = -1;
 
-    void ensureSink(int sampleRate);
+    bool ensureSink(int sampleRate);
 };
