@@ -6,8 +6,9 @@
 #include <QFont>
 #include <QRectF>
 #include <cmath>
+#include "thememanager.h"
 
-inline QPixmap createLogo(int size) {
+inline QPixmap createLogo(int size, const ThemePalette &theme) {
     QPixmap pm(size, size);
     pm.fill(Qt::transparent);
     QPainter p(&pm);
@@ -19,21 +20,25 @@ inline QPixmap createLogo(int size) {
     // Outer glow
     QRadialGradient glow(s*0.5f, s*0.5f, s*0.5f);
     glow.setColorAt(0.55f, Qt::transparent);
-    glow.setColorAt(0.78f, QColor(0xcb, 0xa6, 0xf7, 50));
+    QColor glowColor = theme.accent;
+    glowColor.setAlpha(62);
+    glow.setColorAt(0.78f, glowColor);
     glow.setColorAt(1.00f, Qt::transparent);
     p.fillRect(pm.rect(), glow);
 
     // Background circle
     QRadialGradient bg(s*0.38f, s*0.33f, s*0.58f);
-    bg.setColorAt(0.0f, QColor(0x45, 0x47, 0x5a));
-    bg.setColorAt(1.0f, QColor(0x18, 0x18, 0x25));
+    bg.setColorAt(0.0f, theme.surface2);
+    bg.setColorAt(1.0f, theme.mantle);
     p.setBrush(bg);
     p.setPen(Qt::NoPen);
     p.drawEllipse(QRectF(s*0.04f, s*0.04f, s*0.92f, s*0.92f));
 
     // Inner ring
     p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(QColor(0xcb, 0xa6, 0xf7, 55), s*0.014f));
+    QColor ring = theme.accent;
+    ring.setAlpha(72);
+    p.setPen(QPen(ring, s*0.014f));
     p.drawEllipse(QRectF(s*0.09f, s*0.09f, s*0.82f, s*0.82f));
 
     // EQ bars
@@ -51,10 +56,10 @@ inline QPixmap createLogo(int size) {
         float y = cy - h * 0.5f;
 
         QLinearGradient barG(x, y, x, y + h);
-        barG.setColorAt(0.0f, QColor(0xf3, 0x8b, 0xa8)); // pink top
-        barG.setColorAt(0.4f, QColor(0xcb, 0xa6, 0xf7)); // mauve
-        barG.setColorAt(0.8f, QColor(0x89, 0xb4, 0xfa)); // blue
-        barG.setColorAt(1.0f, QColor(0x94, 0xe2, 0xd5)); // teal bottom
+        barG.setColorAt(0.0f, theme.danger);
+        barG.setColorAt(0.4f, theme.accent);
+        barG.setColorAt(0.8f, theme.accent2);
+        barG.setColorAt(1.0f, theme.teal);
 
         p.setBrush(barG);
         p.setPen(Qt::NoPen);
@@ -69,7 +74,9 @@ inline QPixmap createLogo(int size) {
 
     // "II" text
     if (size >= 28) {
-        p.setPen(QColor(0xa6, 0xad, 0xc8, 190));
+        QColor label = theme.subtext0;
+        label.setAlpha(210);
+        p.setPen(label);
         QFont f("Segoe UI", qMax(5, int(s * 0.12f)), QFont::Bold);
         p.setFont(f);
         p.drawText(QRectF(0, s*0.73f, s, s*0.20f),

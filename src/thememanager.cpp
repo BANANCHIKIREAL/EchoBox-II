@@ -30,6 +30,12 @@ QList<ThemeInfo> ThemeManager::themes() {
         {"sakura",   "Sakura Night",   "Тёмная слива и тёплый розовый"},
         {"forest",   "Emerald Forest", "Спокойный изумрудный и бирюзовый"},
         {"ember",    "Ember Glow",     "Тёплый графит, янтарь и апельсин"},
+        {"aurora",   "Aurora Borealis", "Северное сияние: мята, индиго и лёд"},
+        {"cyber",    "Cyber Violet",    "Контрастный неон: фиолетовый и голубой"},
+        {"rose",     "Rose Quartz",     "Дымчатый кварц и нежная пыльная роза"},
+        {"arctic",   "Arctic Frost",    "Холодный графит, ледяной голубой и серебро"},
+        {"golden",   "Golden Hour",     "Тёмный шоколад, золото и тёплый янтарь"},
+        {"crimson",  "Crimson Noir",    "Глубокий чёрный, рубиновый и алый"},
     };
 }
 
@@ -64,6 +70,48 @@ ThemePalette ThemeManager::palette(const QString &requestedId, const QColor &cus
                         "#fff0e5", "#bd9a86", "#e4c7b6",
                         "#ff9b63", "#f7c66b", "#a9df86", "#ff6d75",
                         "#ffd078", "#6fd0bd", "#78c8e8", "#ef9bb9");
+    } else if (id == "aurora") {
+        p = makePalette(id, "#09151b", "#071016", "#040b10",
+                        "#132b33", "#1d3e48", "#2b5660",
+                        "#46727a", "#688f94", "#8eadb0",
+                        "#e6fff9", "#91b9b5", "#c2e2dc",
+                        "#66f2c2", "#8f9cff", "#8ee6a8", "#ff7797",
+                        "#f5d477", "#57dfd0", "#78d9ff", "#d99cff");
+    } else if (id == "cyber") {
+        p = makePalette(id, "#120d1d", "#0d0917", "#08050f",
+                        "#25183a", "#372153", "#4d2d70",
+                        "#69478c", "#8969a8", "#aa8dc2",
+                        "#f8eeff", "#ad91bd", "#dbc7e7",
+                        "#d66bff", "#45d9ff", "#75efa8", "#ff4f8a",
+                        "#ffd166", "#4fe3cc", "#45d9ff", "#ff82cc");
+    } else if (id == "rose") {
+        p = makePalette(id, "#21191f", "#191217", "#110c10",
+                        "#382a35", "#4c3847", "#654d5f",
+                        "#806a79", "#9f8997", "#bba6b4",
+                        "#fff2f7", "#c09eae", "#e2cad5",
+                        "#e8a0b7", "#b9a3ef", "#9edbb3", "#f2708f",
+                        "#efc184", "#81d5c9", "#91c9ed", "#f3b4cf");
+    } else if (id == "arctic") {
+        p = makePalette(id, "#111923", "#0c121a", "#080d12",
+                        "#202e3c", "#2e4152", "#40596b",
+                        "#5e7687", "#7d94a3", "#9eafb9",
+                        "#edf8ff", "#9baebe", "#cfdee8",
+                        "#8adcf6", "#9db7ff", "#9be2c2", "#ff879d",
+                        "#f3cf82", "#75ddd2", "#8adcf6", "#d7adf2");
+    } else if (id == "golden") {
+        p = makePalette(id, "#1f1810", "#171109", "#0f0b06",
+                        "#34291b", "#493a26", "#614f35",
+                        "#7e694c", "#9d886a", "#baa88d",
+                        "#fff5df", "#bba888", "#e3d3b7",
+                        "#f4c66d", "#e79b60", "#a7d990", "#f27679",
+                        "#ffda83", "#75cdb5", "#80c9e8", "#e9a6bb");
+    } else if (id == "crimson") {
+        p = makePalette(id, "#190d12", "#12090d", "#0b0508",
+                        "#301923", "#45222f", "#60303f",
+                        "#7c4b59", "#9b6975", "#b88992",
+                        "#fff0f3", "#bd949d", "#e2c4ca",
+                        "#ed5d7b", "#b68cff", "#91d5a4", "#ff526f",
+                        "#f2b66f", "#6dd0c1", "#79bee9", "#f39ab4");
     } else {
         p = makePalette("mocha", "#1e1e2e", "#181825", "#11111b",
                         "#313244", "#3b3d52", "#45475a",
