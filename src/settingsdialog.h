@@ -92,6 +92,7 @@ private:
     void collectResult();
     void connectLive();
     void refreshPresetSwatches();
+    void refreshThemePreview();
     void setEqPreset(const float (&gains)[kEqBandCount]);
 
     AppSettings m_result;
@@ -99,6 +100,8 @@ private:
     QStackedWidget *m_stack = nullptr;
 
     QLabel        *m_accentSwatch    = nullptr;
+    QComboBox     *m_themeCombo      = nullptr;
+    QLabel        *m_themePreview    = nullptr;
     QList<class QPushButton*> m_presetBtns;
     QList<QColor>              m_presetColors;
     QButtonGroup  *m_fontGroup       = nullptr;

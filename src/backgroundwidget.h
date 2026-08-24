@@ -2,6 +2,8 @@
 #include <QWidget>
 #include <QTimer>
 #include <QImage>
+#include <QColor>
+#include <QVector>
 #include <vector>
 
 struct BGParticle {
@@ -17,6 +19,8 @@ public:
     explicit AuroraWidget(QWidget *parent = nullptr);
     void setLightMode(bool) {}
     void setAmplitude(float amp);
+    void setThemeColors(const QColor &top, const QColor &middle, const QColor &bottom,
+                        const QVector<QColor> &accents);
 
 protected:
     void paintEvent(QPaintEvent *) override;
@@ -37,4 +41,8 @@ private:
     bool     m_particlesInited = false;
     QImage   m_grain;
     int      m_grainTick = 0;
+    QColor   m_baseTop {0x10, 0x10, 0x1c};
+    QColor   m_baseMiddle {0x18, 0x18, 0x25};
+    QColor   m_baseBottom {0x0c, 0x0c, 0x16};
+    QVector<QColor> m_themeColors;
 };

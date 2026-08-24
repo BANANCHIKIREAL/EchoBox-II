@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(EchoBoxII VERSION 2.2.2 LANGUAGES CXX)
+project(EchoBoxII VERSION 2.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,6 +38,8 @@ qt_add_executable(EchoBoxII
     src/visualizer.h
     src/backgroundwidget.cpp
     src/backgroundwidget.h
+    src/thememanager.cpp
+    src/thememanager.h
     src/logo.h
     src/icons.h
     src/discordrpc.h
@@ -46,6 +48,8 @@ qt_add_executable(EchoBoxII
     src/settingsdialog.cpp
     src/waveformslider.h
     src/waveformslider.cpp
+    src/waveformcache.h
+    src/waveformcache.cpp
     src/libraryscanner.h
     src/libraryscanner.cpp
     src/audioengine.h

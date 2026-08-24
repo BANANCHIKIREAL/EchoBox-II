@@ -3,6 +3,7 @@
 #include <QTimer>
 #include <QVector>
 #include <QAudioBuffer>
+#include <QColor>
 #include <complex>
 #include <vector>
 
@@ -16,6 +17,7 @@ public:
 
     void setActive(bool active);
     void feedAudioBuffer(const QAudioBuffer &buffer);  // реальный звук
+    void setThemeColors(const QColor &background, const QVector<QColor> &colors);
 
 protected:
     void paintEvent(QPaintEvent *) override;
@@ -33,4 +35,6 @@ private:
     bool           m_active   = false;
     bool           m_hasBands = false;
     float          m_auroraPhase = 0.0f;
+    QColor         m_background {0x18, 0x18, 0x25};
+    QVector<QColor> m_themeColors;
 };
