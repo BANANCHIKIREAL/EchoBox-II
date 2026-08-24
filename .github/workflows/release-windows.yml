@@ -1,0 +1,91 @@
+name: Build Windows release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: "6.8.3"
+          arch: win64_mingw
+          tools: tools_mingw1310
+          cache: true
+
+      - name: Configure
+        run: cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build/release --config Release --parallel 4
+
+      - name: Deploy portable application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = Join-Path $PWD 'dist/EchoBox-II'
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item -LiteralPath 'build/release/EchoBoxII.exe' -Destination $dist
+          windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw "$dist/EchoBoxII.exe"
+
+          $mingwBin = Split-Path -Parent (Get-Command g++.exe).Source
+          foreach ($dll in 'libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll') {
+            $source = Join-Path $mingwBin $dll
+            if (Test-Path -LiteralPath $source) {
+              Copy-Item -LiteralPath $source -Destination $dist
+            }
+          }
+
+          Invoke-WebRequest -UseBasicParsing `
+            -Uri 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe' `
+            -OutFile (Join-Path $dist 'yt-dlp.exe')
+
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          New-Item -ItemType Directory -Force -Path release_pkg | Out-Null
+          Compress-Archive -Path 'dist/EchoBox-II/*' `
+            -DestinationPath "release_pkg/EchoBox-II-$version-portable.zip" `
+            -CompressionLevel Optimal
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install innosetup -y --no-progress
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            throw "Inno Setup compiler not found: $iscc"
+          }
+          & $iscc 'installer/echobox.iss'
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          gh release create '${{ github.ref_name }}' `
+            "release_pkg/EchoBox-II-$version-portable.zip#EchoBox II $version portable" `
+            "installer_out/EchoBoxII-Setup-$version.exe#EchoBox II $version installer" `
+            --title "EchoBox II ${{ github.ref_name }}" `
+            --generate-notes `
+            --latest
