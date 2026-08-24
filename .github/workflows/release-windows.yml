@@ -54,6 +54,7 @@ jobs:
           $dist = Join-Path $PWD 'dist/EchoBox-II'
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
           Copy-Item -LiteralPath 'build/release/EchoBoxII.exe' -Destination $dist
+          Copy-Item -LiteralPath 'THIRD_PARTY_NOTICES.md' -Destination $dist
           windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw "$dist/EchoBoxII.exe"
 
           $mingwBin = Split-Path -Parent (Get-Command g++.exe).Source

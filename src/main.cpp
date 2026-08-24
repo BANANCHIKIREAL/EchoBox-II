@@ -7,7 +7,7 @@ int main(int argc, char *argv[]) {
     app.setApplicationName("EchoBox II");
     app.setApplicationVersion(QStringLiteral(ECHOBOX_VERSION));
     app.setOrganizationName("EchoBox");
-    app.setWindowIcon(QIcon(createLogo(256)));
+    app.setWindowIcon(QIcon(createLogo(256, ThemeManager::palette("mocha"))));
 
     MainWindow w;
     if (!w.startsMinimized()) w.show();

@@ -1,348 +1,192 @@
 #pragma once
-#include <QIcon>
-#include <QPixmap>
-#include <QPainter>
-#include <QPen>
-#include <QPolygonF>
-#include <QPainterPath>
-#include <QLineF>
-#include <QGuiApplication>
 
+#include <QGuiApplication>
+#include <QIcon>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
+#include <QPolygonF>
+
+// Compact, dependency-free 24 px vector icon set. The geometry follows the
+// visual language of Tabler Icons: 2 px strokes, round caps and round joins.
+// Keeping the glyphs in code avoids shipping a font or hundreds of SVG files.
 namespace Ico {
 
-// Creates a high-DPI aware pixmap for the given logical size
-inline QPixmap makePixmap(int sz) {
-    const qreal dpr = qGuiApp->devicePixelRatio();
-    QPixmap pm(qRound(sz * dpr), qRound(sz * dpr));
-    pm.setDevicePixelRatio(dpr);
-    pm.fill(Qt::transparent);
-    return pm;
+inline QPixmap makePixmap(int size) {
+    const qreal dpr = qGuiApp ? qGuiApp->devicePixelRatio() : 1.0;
+    QPixmap pixmap(qRound(size * dpr), qRound(size * dpr));
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+    return pixmap;
 }
 
-// Полигон со скруглёнными углами (каждый угол — квадратичная кривая к
-// точке, отступленной от вершины на radius по обеим сторонам) — тот же
-// приём, что и скруглённые прямоугольники у pause(), но для треугольника
-inline QPainterPath roundedPolygon(const QVector<QPointF> &pts, qreal radius) {
-    QPainterPath path;
-    const int n = pts.size();
-    for (int i = 0; i < n; ++i) {
-        const QPointF prev = pts[(i - 1 + n) % n];
-        const QPointF cur  = pts[i];
-        const QPointF next = pts[(i + 1) % n];
-        const qreal lenPrev = QLineF(cur, prev).length();
-        const qreal lenNext = QLineF(cur, next).length();
-        const qreal rp = qMin(radius, lenPrev * 0.5);
-        const qreal rn = qMin(radius, lenNext * 0.5);
-        const QPointF p1 = cur + (prev - cur) * (rp / lenPrev);
-        const QPointF p2 = cur + (next - cur) * (rn / lenNext);
-        if (i == 0) path.moveTo(p1);
-        else        path.lineTo(p1);
-        path.quadTo(cur, p2);
-    }
-    path.closeSubpath();
-    return path;
+inline void setup(QPainter &p, QColor color, int size, qreal width = 2.0) {
+    p.setRenderHint(QPainter::Antialiasing);
+    p.scale(size / 24.0, size / 24.0);
+    p.setPen(QPen(color, width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
 }
 
-inline QIcon play(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
+inline QIcon play(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
     p.setPen(Qt::NoPen); p.setBrush(c);
-    const QVector<QPointF> t = {
-        QPointF(sz*0.20, sz*0.10), QPointF(sz*0.88, sz*0.50), QPointF(sz*0.20, sz*0.90)
-    };
-    p.drawPath(roundedPolygon(t, sz*0.09));
+    QPainterPath path; path.moveTo(7, 4.6); path.quadTo(6, 4, 6, 5.8);
+    path.lineTo(6, 18.2); path.quadTo(6, 20, 7.5, 19.1);
+    path.lineTo(18, 12.9); path.quadTo(19.5, 12, 18, 11.1); path.closeSubpath();
+    p.drawPath(path); return QIcon(pm);
+}
+
+inline QIcon pause(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    p.setPen(Qt::NoPen); p.setBrush(c);
+    p.drawRoundedRect(QRectF(6, 4, 4, 16), 1.4, 1.4);
+    p.drawRoundedRect(QRectF(14, 4, 4, 16), 1.4, 1.4); return QIcon(pm);
+}
+
+inline QIcon stop(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    p.setPen(Qt::NoPen); p.setBrush(c); p.drawRoundedRect(QRectF(5, 5, 14, 14), 2, 2);
     return QIcon(pm);
 }
 
-inline QIcon pause(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(Qt::NoPen); p.setBrush(c);
-    const int bw = qRound(sz*0.25), bh = qRound(sz*0.68), by = qRound(sz*0.16);
-    p.drawRoundedRect(qRound(sz*0.14), by, bw, bh, 3, 3);
-    p.drawRoundedRect(qRound(sz*0.61), by, bw, bh, 3, 3);
-    return QIcon(pm);
+inline QIcon prev(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    p.setPen(Qt::NoPen); p.setBrush(c); p.drawRoundedRect(QRectF(5, 5, 2.8, 14), 1, 1);
+    QPolygonF triangle; triangle << QPointF(18.5, 5) << QPointF(8.2, 12) << QPointF(18.5, 19);
+    p.drawPolygon(triangle); return QIcon(pm);
 }
 
-inline QIcon stop(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(Qt::NoPen); p.setBrush(c);
-    const int m = qRound(sz * 0.20);
-    p.drawRect(m, m, sz - 2*m, sz - 2*m); // строгий квадрат — стандартный символ стоп
-    return QIcon(pm);
+inline QIcon next(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    p.setPen(Qt::NoPen); p.setBrush(c); p.drawRoundedRect(QRectF(16.2, 5, 2.8, 14), 1, 1);
+    QPolygonF triangle; triangle << QPointF(5.5, 5) << QPointF(15.8, 12) << QPointF(5.5, 19);
+    p.drawPolygon(triangle); return QIcon(pm);
 }
 
-inline QIcon prev(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(Qt::NoPen); p.setBrush(c);
-    p.drawRoundedRect(qRound(sz*0.10), qRound(sz*0.15), qRound(sz*0.17), qRound(sz*0.70), 2, 2);
-    QPolygonF t;
-    t << QPointF(sz*0.88, sz*0.14) << QPointF(sz*0.33, sz*0.50) << QPointF(sz*0.88, sz*0.86);
-    p.drawPolygon(t);
-    return QIcon(pm);
-}
-
-inline QIcon next(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(Qt::NoPen); p.setBrush(c);
-    QPolygonF t;
-    t << QPointF(sz*0.12, sz*0.14) << QPointF(sz*0.67, sz*0.50) << QPointF(sz*0.12, sz*0.86);
-    p.drawPolygon(t);
-    p.drawRoundedRect(qRound(sz*0.73), qRound(sz*0.15), qRound(sz*0.17), qRound(sz*0.70), 2, 2);
-    return QIcon(pm);
-}
-
-inline QIcon volume(int level, QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(Qt::NoPen); p.setBrush(c);
-    QPolygonF cone;
-    cone << QPointF(sz*0.08, sz*0.37) << QPointF(sz*0.32, sz*0.37)
-         << QPointF(sz*0.52, sz*0.16) << QPointF(sz*0.52, sz*0.84)
-         << QPointF(sz*0.32, sz*0.63) << QPointF(sz*0.08, sz*0.63);
-    p.drawPolygon(cone);
-    if (level == 0) {
-        QPen xp(c, sz*0.10, Qt::SolidLine, Qt::RoundCap);
-        p.setPen(xp); p.setBrush(Qt::NoBrush);
-        p.drawLine(QPointF(sz*0.62, sz*0.36), QPointF(sz*0.90, sz*0.64));
-        p.drawLine(QPointF(sz*0.90, sz*0.36), QPointF(sz*0.62, sz*0.64));
+inline QIcon volume(int level, QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    QPainterPath speaker; speaker.moveTo(5, 9); speaker.lineTo(8, 9); speaker.lineTo(12, 5.5);
+    speaker.lineTo(12, 18.5); speaker.lineTo(8, 15); speaker.lineTo(5, 15); speaker.closeSubpath();
+    p.drawPath(speaker);
+    if (level <= 0) {
+        p.drawLine(QPointF(16, 9), QPointF(21, 14)); p.drawLine(QPointF(21, 9), QPointF(16, 14));
     } else {
-        QPen wp(c, sz*0.09, Qt::SolidLine, Qt::RoundCap);
-        p.setPen(wp); p.setBrush(Qt::NoBrush);
-        if (level >= 1) p.drawArc(QRectF(sz*0.55, sz*0.31, sz*0.17, sz*0.38), -50*16, 100*16);
-        if (level >= 2) p.drawArc(QRectF(sz*0.62, sz*0.21, sz*0.22, sz*0.58), -50*16, 100*16);
-        if (level >= 3) p.drawArc(QRectF(sz*0.70, sz*0.11, sz*0.26, sz*0.78), -50*16, 100*16);
+        if (level >= 1) p.drawArc(QRectF(11.5, 8, 5, 8), -55 * 16, 110 * 16);
+        if (level >= 2) p.drawArc(QRectF(11.5, 5, 10, 14), -52 * 16, 104 * 16);
+        if (level >= 3) p.drawArc(QRectF(11, 2.5, 15, 19), -48 * 16, 96 * 16);
     }
     return QIcon(pm);
 }
 
-inline QIcon shuffle(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    p.setPen(pen); p.setBrush(Qt::NoBrush);
-    // верхняя линия ↗
-    p.drawLine(QPointF(sz*0.08f, sz*0.68f), QPointF(sz*0.38f, sz*0.68f));
-    p.drawLine(QPointF(sz*0.38f, sz*0.68f), QPointF(sz*0.80f, sz*0.26f));
-    // нижняя линия ↘
-    p.drawLine(QPointF(sz*0.08f, sz*0.32f), QPointF(sz*0.38f, sz*0.32f));
-    p.drawLine(QPointF(sz*0.38f, sz*0.32f), QPointF(sz*0.80f, sz*0.74f));
-    // стрелки вправо
-    p.setPen(Qt::NoPen); p.setBrush(c);
-    const float aw = sz*0.10f;
-    QPolygonF a1; a1 << QPointF(sz*0.96f, sz*0.26f) << QPointF(sz*0.78f, sz*0.16f) << QPointF(sz*0.78f, sz*0.36f); p.drawPolygon(a1);
-    QPolygonF a2; a2 << QPointF(sz*0.96f, sz*0.74f) << QPointF(sz*0.78f, sz*0.64f) << QPointF(sz*0.78f, sz*0.84f); p.drawPolygon(a2);
+inline QIcon shuffle(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    QPainterPath upper; upper.moveTo(4, 7); upper.lineTo(7, 7); upper.cubicTo(11, 7, 13, 17, 17, 17); upper.lineTo(20, 17);
+    QPainterPath lower; lower.moveTo(4, 17); lower.lineTo(7, 17); lower.cubicTo(11, 17, 13, 7, 17, 7); lower.lineTo(20, 7);
+    p.drawPath(upper); p.drawPath(lower);
+    p.drawLine(QPointF(17, 4), QPointF(20, 7)); p.drawLine(QPointF(20, 7), QPointF(17, 10));
+    p.drawLine(QPointF(17, 14), QPointF(20, 17)); p.drawLine(QPointF(20, 17), QPointF(17, 20));
     return QIcon(pm);
 }
 
-inline QIcon repeatAll(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap);
-    p.setPen(pen); p.setBrush(Qt::NoBrush);
-    p.drawArc(QRectF(sz*0.10f, sz*0.10f, sz*0.80f, sz*0.80f), 40*16, 280*16);
-    // arrowhead
-    p.setPen(Qt::NoPen); p.setBrush(c);
-    QPolygonF a;
-    a << QPointF(sz*0.88f, sz*0.20f) << QPointF(sz*0.72f, sz*0.10f) << QPointF(sz*0.72f, sz*0.30f);
-    p.drawPolygon(a);
+inline void drawRepeat(QPainter &p) {
+    p.drawLine(QPointF(4, 7), QPointF(17, 7)); p.drawLine(QPointF(17, 7), QPointF(20, 10));
+    p.drawLine(QPointF(20, 10), QPointF(20, 7)); p.drawLine(QPointF(20, 7), QPointF(17, 4));
+    p.drawLine(QPointF(20, 17), QPointF(7, 17)); p.drawLine(QPointF(7, 17), QPointF(4, 14));
+    p.drawLine(QPointF(4, 14), QPointF(4, 17)); p.drawLine(QPointF(4, 17), QPointF(7, 20));
+}
+
+inline QIcon repeatAll(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size); drawRepeat(p); return QIcon(pm);
+}
+
+inline QIcon repeatOne(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size); drawRepeat(p);
+    p.drawLine(QPointF(11, 11), QPointF(13, 9.5)); p.drawLine(QPointF(13, 9.5), QPointF(13, 14.5));
     return QIcon(pm);
 }
 
-inline QIcon repeatOne(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap);
-    p.setPen(pen); p.setBrush(Qt::NoBrush);
-    p.drawArc(QRectF(sz*0.10f, sz*0.10f, sz*0.80f, sz*0.80f), 40*16, 280*16);
-    p.setPen(Qt::NoPen); p.setBrush(c);
-    QPolygonF a;
-    a << QPointF(sz*0.88f, sz*0.20f) << QPointF(sz*0.72f, sz*0.10f) << QPointF(sz*0.72f, sz*0.30f);
-    p.drawPolygon(a);
-    // "1"
-    p.setPen(QPen(c, 1)); p.setBrush(Qt::NoBrush);
-    QFont f; f.setPixelSize(qRound(sz * 0.32f)); f.setBold(true); p.setFont(f);
-    p.drawText(QRectF(sz*0.34f, sz*0.32f, sz*0.32f, sz*0.36f), Qt::AlignCenter, "1");
+inline QIcon microphone(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    p.drawRoundedRect(QRectF(8, 3, 8, 12), 4, 4);
+    QPainterPath arc; arc.moveTo(5, 11); arc.cubicTo(5, 16, 8, 19, 12, 19); arc.cubicTo(16, 19, 19, 16, 19, 11); p.drawPath(arc);
+    p.drawLine(QPointF(12, 19), QPointF(12, 22)); p.drawLine(QPointF(9, 22), QPointF(15, 22)); return QIcon(pm);
+}
+
+inline QIcon expand(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    p.drawLine(4, 9, 4, 4); p.drawLine(4, 4, 9, 4); p.drawLine(15, 4, 20, 4); p.drawLine(20, 4, 20, 9);
+    p.drawLine(20, 15, 20, 20); p.drawLine(20, 20, 15, 20); p.drawLine(9, 20, 4, 20); p.drawLine(4, 20, 4, 15);
     return QIcon(pm);
 }
 
-inline QIcon microphone(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(Qt::NoPen); p.setBrush(c);
-    p.drawRoundedRect(QRectF(sz*0.34f, sz*0.05f, sz*0.32f, sz*0.50f), sz*0.16f, sz*0.16f);
-    QPen ap(c, sz*0.09f, Qt::SolidLine, Qt::RoundCap);
-    p.setPen(ap); p.setBrush(Qt::NoBrush);
-    p.drawArc(QRectF(sz*0.17f, sz*0.30f, sz*0.66f, sz*0.44f), 0, -180*16);
-    p.drawLine(QPointF(sz*0.50f, sz*0.74f), QPointF(sz*0.50f, sz*0.89f));
-    p.drawLine(QPointF(sz*0.28f, sz*0.89f), QPointF(sz*0.72f, sz*0.89f));
+inline QIcon minimize(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size); p.drawLine(5, 12, 19, 12); return QIcon(pm);
+}
+
+inline QIcon closeIcon(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size); p.drawLine(6, 6, 18, 18); p.drawLine(18, 6, 6, 18); return QIcon(pm);
+}
+
+inline QIcon dockTop(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    p.drawRoundedRect(QRectF(3, 4, 18, 16), 2, 2); p.drawLine(3, 9, 21, 9);
+    p.drawLine(9, 16, 12, 13); p.drawLine(12, 13, 15, 16); return QIcon(pm);
+}
+
+inline QIcon trash(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    p.drawLine(4, 7, 20, 7); p.drawLine(9, 7, 9, 4); p.drawLine(9, 4, 15, 4); p.drawLine(15, 4, 15, 7);
+    QPainterPath body; body.moveTo(6, 7); body.lineTo(7, 20); body.lineTo(17, 20); body.lineTo(18, 7); p.drawPath(body);
+    p.drawLine(10, 11, 10, 16); p.drawLine(14, 11, 14, 16); return QIcon(pm);
+}
+
+inline QIcon sliders(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    p.drawLine(4, 7, 20, 7); p.drawLine(4, 12, 20, 12); p.drawLine(4, 17, 20, 17);
+    p.setBrush(c); p.drawEllipse(QPointF(9, 7), 2, 2); p.drawEllipse(QPointF(15, 12), 2, 2); p.drawEllipse(QPointF(11, 17), 2, 2);
     return QIcon(pm);
 }
 
-inline QIcon expand(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(c, sz * 0.11f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    p.setPen(pen);
-    // top-left corner
-    p.drawLine(QPointF(sz*0.16f, sz*0.43f), QPointF(sz*0.16f, sz*0.16f));
-    p.drawLine(QPointF(sz*0.16f, sz*0.16f), QPointF(sz*0.43f, sz*0.16f));
-    // top-right corner
-    p.drawLine(QPointF(sz*0.57f, sz*0.16f), QPointF(sz*0.84f, sz*0.16f));
-    p.drawLine(QPointF(sz*0.84f, sz*0.16f), QPointF(sz*0.84f, sz*0.43f));
-    // bottom-left corner
-    p.drawLine(QPointF(sz*0.16f, sz*0.57f), QPointF(sz*0.16f, sz*0.84f));
-    p.drawLine(QPointF(sz*0.16f, sz*0.84f), QPointF(sz*0.43f, sz*0.84f));
-    // bottom-right corner
-    p.drawLine(QPointF(sz*0.57f, sz*0.84f), QPointF(sz*0.84f, sz*0.84f));
-    p.drawLine(QPointF(sz*0.84f, sz*0.84f), QPointF(sz*0.84f, sz*0.57f));
+inline QIcon folder(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    QPainterPath path; path.moveTo(3, 6); path.lineTo(9, 6); path.lineTo(11, 8); path.lineTo(21, 8);
+    path.lineTo(21, 19); path.quadTo(21, 21, 19, 21); path.lineTo(5, 21); path.quadTo(3, 21, 3, 19); path.closeSubpath();
+    p.drawPath(path); return QIcon(pm);
+}
+
+inline QIcon windowIcon(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    p.drawRoundedRect(QRectF(3, 4, 18, 16), 2, 2); p.drawLine(3, 9, 21, 9);
+    p.setPen(Qt::NoPen); p.setBrush(c); p.drawEllipse(QPointF(6.5, 6.5), .8, .8); p.drawEllipse(QPointF(9.5, 6.5), .8, .8);
     return QIcon(pm);
 }
 
-inline QIcon minimize(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(c, sz * 0.11f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    p.setPen(pen);
-    p.drawLine(QPointF(sz*0.18f, sz*0.5f), QPointF(sz*0.82f, sz*0.5f));
+inline QIcon link(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    QPainterPath a; a.moveTo(10, 13); a.lineTo(8.5, 14.5); a.cubicTo(6.5, 16.5, 3.5, 13.5, 5.5, 11.5); a.lineTo(8, 9);
+    QPainterPath b; b.moveTo(14, 11); b.lineTo(15.5, 9.5); b.cubicTo(17.5, 7.5, 20.5, 10.5, 18.5, 12.5); b.lineTo(16, 15);
+    p.drawPath(a); p.drawPath(b); p.drawLine(9, 15, 15, 9); return QIcon(pm);
+}
+
+inline QIcon equalizer(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    p.drawLine(6, 4, 6, 20); p.drawLine(12, 4, 12, 20); p.drawLine(18, 4, 18, 20);
+    p.setBrush(c); p.drawRoundedRect(QRectF(4, 7, 4, 4), 1, 1); p.drawRoundedRect(QRectF(10, 13, 4, 4), 1, 1); p.drawRoundedRect(QRectF(16, 6, 4, 4), 1, 1);
     return QIcon(pm);
 }
 
-inline QIcon closeIcon(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(c, sz * 0.11f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    p.setPen(pen);
-    p.drawLine(QPointF(sz*0.22f, sz*0.22f), QPointF(sz*0.78f, sz*0.78f));
-    p.drawLine(QPointF(sz*0.78f, sz*0.22f), QPointF(sz*0.22f, sz*0.78f));
-    return QIcon(pm);
+inline QIcon music(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
+    p.drawLine(QPointF(9, 18), QPointF(9, 5)); p.drawLine(QPointF(9, 5), QPointF(19, 3)); p.drawLine(QPointF(19, 3), QPointF(19, 16));
+    p.setBrush(c); p.drawEllipse(QPointF(6.5, 18), 2.5, 2); p.drawEllipse(QPointF(16.5, 16), 2.5, 2); return QIcon(pm);
 }
 
-inline QIcon dockTop(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(c, sz * 0.11f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    p.setPen(pen);
-    // Стрелка вверх — "прижать к верху экрана"
-    p.drawLine(QPointF(sz*0.24f, sz*0.62f), QPointF(sz*0.5f, sz*0.30f));
-    p.drawLine(QPointF(sz*0.5f,  sz*0.30f), QPointF(sz*0.76f, sz*0.62f));
-    // Полоса — "во всю ширину"
-    p.drawLine(QPointF(sz*0.16f, sz*0.84f), QPointF(sz*0.84f, sz*0.84f));
-    return QIcon(pm);
+inline QIcon arrowUp(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size); p.drawLine(12, 20, 12, 5); p.drawLine(6, 11, 12, 5); p.drawLine(18, 11, 12, 5); return QIcon(pm);
 }
 
-inline QIcon trash(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    p.setPen(pen);
-    p.setBrush(Qt::NoBrush);
-    // Крышка
-    p.drawLine(QPointF(sz*0.20f, sz*0.30f), QPointF(sz*0.80f, sz*0.30f));
-    p.drawLine(QPointF(sz*0.40f, sz*0.30f), QPointF(sz*0.44f, sz*0.18f));
-    p.drawLine(QPointF(sz*0.44f, sz*0.18f), QPointF(sz*0.56f, sz*0.18f));
-    p.drawLine(QPointF(sz*0.56f, sz*0.18f), QPointF(sz*0.60f, sz*0.30f));
-    // Корзина
-    QPainterPath body;
-    body.moveTo(sz*0.28f, sz*0.34f);
-    body.lineTo(sz*0.33f, sz*0.86f);
-    body.lineTo(sz*0.67f, sz*0.86f);
-    body.lineTo(sz*0.72f, sz*0.34f);
-    p.drawPath(body);
-    // Полоски
-    p.drawLine(QPointF(sz*0.41f, sz*0.44f), QPointF(sz*0.43f, sz*0.76f));
-    p.drawLine(QPointF(sz*0.5f,  sz*0.44f), QPointF(sz*0.5f,  sz*0.76f));
-    p.drawLine(QPointF(sz*0.59f, sz*0.44f), QPointF(sz*0.57f, sz*0.76f));
-    return QIcon(pm);
-}
-
-inline QIcon sliders(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    p.setPen(pen);
-    const float ys[] = {0.28f, 0.5f, 0.72f};
-    const float kx[] = {0.62f, 0.36f, 0.58f};
-    for (int i = 0; i < 3; ++i) {
-        const float y = sz * ys[i];
-        p.drawLine(QPointF(sz*0.16f, y), QPointF(sz*0.84f, y));
-        p.setBrush(c);
-        p.drawEllipse(QPointF(sz * kx[i], y), sz*0.075f, sz*0.075f);
-    }
-    return QIcon(pm);
-}
-
-inline QIcon folder(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    p.setPen(pen);
-    p.setBrush(Qt::NoBrush);
-    QPainterPath path;
-    path.moveTo(sz*0.14f, sz*0.30f);
-    path.lineTo(sz*0.14f, sz*0.78f);
-    path.lineTo(sz*0.86f, sz*0.78f);
-    path.lineTo(sz*0.86f, sz*0.38f);
-    path.lineTo(sz*0.46f, sz*0.38f);
-    path.lineTo(sz*0.38f, sz*0.24f);
-    path.lineTo(sz*0.14f, sz*0.24f);
-    path.closeSubpath();
-    p.drawPath(path);
-    return QIcon(pm);
-}
-
-inline QIcon windowIcon(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(c, sz * 0.09f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    p.setPen(pen);
-    p.setBrush(Qt::NoBrush);
-    p.drawRoundedRect(QRectF(sz*0.14f, sz*0.20f, sz*0.72f, sz*0.60f), sz*0.06f, sz*0.06f);
-    p.drawLine(QPointF(sz*0.14f, sz*0.36f), QPointF(sz*0.86f, sz*0.36f));
-    p.setBrush(c);
-    p.setPen(Qt::NoPen);
-    p.drawEllipse(QPointF(sz*0.24f, sz*0.28f), sz*0.028f, sz*0.028f);
-    p.drawEllipse(QPointF(sz*0.33f, sz*0.28f), sz*0.028f, sz*0.028f);
-    return QIcon(pm);
-}
-
-inline QIcon link(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(c, sz * 0.10f, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    p.setPen(pen);
-    p.setBrush(Qt::NoBrush);
-    p.save();
-    p.translate(sz*0.36f, sz*0.64f); p.rotate(-45);
-    p.drawRoundedRect(QRectF(-sz*0.20f, -sz*0.13f, sz*0.40f, sz*0.26f), sz*0.13f, sz*0.13f);
-    p.restore();
-    p.save();
-    p.translate(sz*0.64f, sz*0.36f); p.rotate(-45);
-    p.drawRoundedRect(QRectF(-sz*0.20f, -sz*0.13f, sz*0.40f, sz*0.26f), sz*0.13f, sz*0.13f);
-    p.restore();
-    return QIcon(pm);
-}
-
-inline QIcon equalizer(QColor c, int sz = 24) {
-    QPixmap pm = makePixmap(sz);
-    QPainter p(&pm); p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(Qt::NoPen); p.setBrush(c);
-    // Классические столбики графического эквалайзера — разной высоты,
-    // симметрично вокруг центра
-    const float heights[] = {0.42f, 0.72f, 0.30f, 0.60f, 0.46f};
-    const float barW = sz * 0.12f;
-    const float gap  = sz * 0.09f;
-    const float totalW = 5 * barW + 4 * gap;
-    float x = (sz - totalW) / 2.0f;
-    for (float h : heights) {
-        const float barH = sz * h;
-        p.drawRoundedRect(QRectF(x, sz - barH - sz*0.08f, barW, barH), barW*0.4f, barW*0.4f);
-        x += barW + gap;
-    }
-    return QIcon(pm);
+inline QIcon arrowDown(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size); p.drawLine(12, 4, 12, 19); p.drawLine(6, 13, 12, 19); p.drawLine(18, 13, 12, 19); return QIcon(pm);
 }
 
 } // namespace Ico

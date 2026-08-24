@@ -200,9 +200,7 @@ public:
                 p->setBrush(m_placeholderBg);
                 p->setRenderHint(QPainter::Antialiasing);
                 p->drawRoundedRect(ir, 5, 5);
-                p->setPen(m_muted);
-                p->setFont(QFont("Segoe UI", 14));
-                p->drawText(ir, Qt::AlignCenter, "♪");
+                Ico::music(m_muted, 20).paint(p, ir, Qt::AlignCenter);
             }
             textX = ir.right() + 8;
         }
@@ -329,7 +327,7 @@ MainWindow::MainWindow(QWidget *parent)
     resize(940, 660);
     setWindowTitle("EchoBox II");
 
-    const QIcon icon(createLogo(128));
+    const QIcon icon(createLogo(128, ThemeManager::palette(m_cfg.theme, m_cfg.accentColor)));
     setWindowIcon(icon);
 
     // Тихая фоновая проверка обновлений (не мешает старту, не спамит окнами)
@@ -348,9 +346,11 @@ void MainWindow::setupMenuBar() {
     fm->addAction("&Открыть файлы...", QKeySequence(Qt::CTRL | Qt::Key_O),
                   this, &MainWindow::openFiles);
     fm->addAction("Открыть &папку...", this, &MainWindow::openFolder);
-    fm->addAction("🔗 Открыть по &ссылке...", QKeySequence(Qt::CTRL | Qt::Key_U),
-                  this, &MainWindow::openUrlDialog);
-    fm->addAction("📚 Сканировать библиотеку", this, &MainWindow::scanLibrary);
+    QAction *openUrlAction = fm->addAction("Открыть по &ссылке...", this, &MainWindow::openUrlDialog);
+    openUrlAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_U));
+    openUrlAction->setIcon(Ico::link(QColor(0xba, 0xc2, 0xde), 18));
+    QAction *scanAction = fm->addAction("Сканировать библиотеку", this, &MainWindow::scanLibrary);
+    scanAction->setIcon(Ico::folder(QColor(0xba, 0xc2, 0xde), 18));
     m_recentMenu = fm->addMenu("&Недавние файлы");
     fm->addSeparator();
     fm->addAction("&Сохранить плейлист...", QKeySequence(Qt::CTRL | Qt::Key_S),
@@ -833,15 +833,16 @@ void MainWindow::setupUi() {
     m_playlistInfo = new QLabel("0 треков", this);
     m_playlistInfo->setObjectName("playlistInfo");
 
-    auto mkSmall = [this](const QString &t, const QString &tip) {
+    auto mkSmall = [this](const QIcon &icon, const QString &tip) {
         auto *b = new QToolButton(this);
-        b->setText(t); b->setToolTip(tip);
+        b->setIcon(icon); b->setIconSize({15, 15}); b->setToolTip(tip);
         b->setObjectName("smallBtn"); b->setFixedSize(26, 26);
         return b;
     };
-    auto *upBtn  = mkSmall("↑","Вверх");
-    auto *dnBtn  = mkSmall("↓","Вниз");
-    auto *rmBtn  = mkSmall("✕","Удалить  Del");
+    const QColor smallIconColor(0xa6, 0xad, 0xc8);
+    auto *upBtn  = mkSmall(Ico::arrowUp(smallIconColor, 15), "Вверх");
+    auto *dnBtn  = mkSmall(Ico::arrowDown(smallIconColor, 15), "Вниз");
+    auto *rmBtn  = mkSmall(Ico::closeIcon(smallIconColor, 15), "Удалить  Del");
 
     auto *clrBtn = new QToolButton(this);
     clrBtn->setObjectName("clearBtn");
@@ -894,25 +895,13 @@ void MainWindow::setupUi() {
 // ─── System tray ─────────────────────────────────────────────────────────────
 
 void MainWindow::setupTray() {
-    QPixmap pm(32, 32);
-    pm.fill(Qt::transparent);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
-    QLinearGradient g(0, 0, 32, 32);
-    g.setColorAt(0, QColor(0xcb, 0xa6, 0xf7));
-    g.setColorAt(1, QColor(0x89, 0xb4, 0xfa));
-    p.setBrush(g); p.setPen(Qt::NoPen);
-    p.drawEllipse(1, 1, 30, 30);
-    p.setPen(QColor(0x1e, 0x1e, 0x2e));
-    p.setFont(QFont("Segoe UI", 15, QFont::Bold));
-    p.drawText(QRect(0, 0, 32, 32), Qt::AlignCenter, "♪");
-
-    m_tray = new QSystemTrayIcon(QIcon(pm), this);
+    const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+    m_tray = new QSystemTrayIcon(QIcon(createLogo(64, theme)), this);
     m_tray->setToolTip("EchoBox II");
 
     auto *tm = new QMenu(this);
-    m_trayPlayAct = tm->addAction("▶  Играть", this, &MainWindow::togglePlayPause);
-    tm->addAction("⏭  Следующий", this, &MainWindow::next);
+    m_trayPlayAct = tm->addAction(Ico::play(theme.text, 16), "Играть", this, &MainWindow::togglePlayPause);
+    tm->addAction(Ico::next(theme.text, 16), "Следующий", this, &MainWindow::next);
     tm->addSeparator();
     tm->addAction("Показать окно", this, [this]{ show(); raise(); activateWindow(); });
     tm->addAction("Выход", qApp, &QApplication::quit);
@@ -1578,6 +1567,12 @@ void MainWindow::applyTheme() {
     if (g_delegate) g_delegate->setTheme(theme);
     if (m_playlistWidget) m_playlistWidget->viewport()->update();
 
+    // The application identity is part of the selected theme too: window,
+    // task switcher, tray and album placeholders update immediately.
+    const QIcon themedLogo(createLogo(128, theme));
+    setWindowIcon(themedLogo);
+    if (m_tray) m_tray->setIcon(themedLogo);
+
     if (m_seekSlider) {
         m_seekSlider->setAccentColor(theme.accent);
         m_seekSlider->setTrackColor(theme.surface2);
@@ -2019,11 +2014,12 @@ void MainWindow::onPlaylistContextMenu(const QPoint &pos) {
     QListWidgetItem *item = m_playlistWidget->itemAt(pos);
     QMenu menu(this);
     if (item) {
-        menu.addAction("▶  Воспроизвести", [this, item]{ onTrackActivated(item); });
-        menu.addAction("✕  Удалить из плейлиста", this, &MainWindow::removeSelectedTracks);
+        const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+        menu.addAction(Ico::play(theme.text, 16), "Воспроизвести", [this, item]{ onTrackActivated(item); });
+        menu.addAction(Ico::trash(theme.text, 16), "Удалить из плейлиста", this, &MainWindow::removeSelectedTracks);
         if (m_playlists.size() > 1) {
-            QMenu *moveMenu = menu.addMenu("→  Переместить в плейлист");
-            QMenu *copyMenu = menu.addMenu("⧉  Копировать в плейлист");
+            QMenu *moveMenu = menu.addMenu("Переместить в плейлист");
+            QMenu *copyMenu = menu.addMenu("Копировать в плейлист");
             for (int i = 0; i < m_playlists.size(); ++i) {
                 if (i == m_activePl) continue;
                 const QString name = m_playlists[i].name;
@@ -2248,7 +2244,7 @@ QString MainWindow::playlistRowLabel(const QUrl &url) const {
         return QFileInfo(url.toLocalFile()).fileName();
     const QString title  = trackDisplayTitle(url);
     const QString artist = trackDisplayArtist(url);
-    return "🔗 " + (artist.isEmpty() ? title : artist + "  —  " + title);
+        return artist.isEmpty() ? title : artist + "  —  " + title;
 }
 
 void MainWindow::openUrlDialog() {
@@ -2321,7 +2317,7 @@ void MainWindow::addDirectStreamUrl(const QUrl &url) {
 
     m_playlist.append(url);
     const int index = m_playlist.size() - 1;
-    auto *item = new QListWidgetItem(QString("  %1.  🔗 %2").arg(index + 1).arg(name));
+    auto *item = new QListWidgetItem(QString("  %1.  %2").arg(index + 1).arg(name));
     item->setData(Qt::UserRole, url);
     item->setData(Qt::UserRole + 2, name);
     item->setToolTip(url.toString());
@@ -2340,7 +2336,7 @@ int MainWindow::insertStreamPlaceholder(const QUrl &pageUrl) {
     m_playlist.append(pageUrl);
     const int index = m_playlist.size() - 1;
 
-    auto *item = new QListWidgetItem(QString("  %1.  🔗 Загрузка…").arg(index + 1));
+    auto *item = new QListWidgetItem(QString("  %1.  Загрузка…").arg(index + 1));
     item->setData(Qt::UserRole, pageUrl);
     item->setToolTip(pageUrl.toString());
     m_playlistWidget->addItem(item);
@@ -2374,7 +2370,7 @@ void MainWindow::updateStreamPlaceholder(const QUrl &pageUrl, bool ok, const QSt
 
     const QString label = artist.isEmpty() ? title : artist + "  —  " + title;
     if (item) {
-        item->setText(QString("  %1.  🔗 %2").arg(idx + 1).arg(label));
+        item->setText(QString("  %1.  %2").arg(idx + 1).arg(label));
         item->setData(Qt::UserRole + 2, title);
         item->setData(Qt::UserRole + 3, artist);
     }
@@ -2903,14 +2899,17 @@ void MainWindow::onPositionChanged(qint64 position) {
 
 void MainWindow::onPlaybackStateChanged(QMediaPlayer::PlaybackState state) {
     const bool playing = (state == QMediaPlayer::PlayingState);
-    const QColor ac = m_cfg.accentColor;
-    const QColor iconC = ac.lightness() > 160 ? QColor(0x1e,0x1e,0x2e) : QColor(0xff,0xff,0xff);
+    const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+    const QColor iconC = theme.accent.lightness() > 160 ? theme.crust : QColor(0xff,0xff,0xff);
     m_playPauseBtn->setIcon(playing ? Ico::pause(iconC, 36) : Ico::play(iconC, 36));
     m_miniPlayBtn->setIcon(playing  ? Ico::pause(iconC, 22) : Ico::play(iconC, 22));
     popButtonIcon(m_playPauseBtn);
     popButtonIcon(m_miniPlayBtn);
     m_visualizer->setActive(playing);
-    if (m_trayPlayAct) m_trayPlayAct->setText(playing ? "⏸  Пауза" : "▶  Играть");
+    if (m_trayPlayAct) {
+        m_trayPlayAct->setText(playing ? "Пауза" : "Играть");
+        m_trayPlayAct->setIcon(playing ? Ico::pause(theme.text, 16) : Ico::play(theme.text, 16));
+    }
     if (m_discord && m_cfg.discordEnabled)
         m_discord->updateActivity(m_titleLabel->text(), m_artistLabel->text(), playing);
     if (!playing)
@@ -3246,10 +3245,11 @@ void MainWindow::popButtonIcon(QToolButton *btn) {
 }
 
 void MainWindow::animateTrackHighlight(const QUrl &url) {
+    const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
     auto *anim = new QVariantAnimation(this);
     anim->setDuration(320);
-    anim->setStartValue(QColor(0xcd, 0xd6, 0xf4));
-    anim->setEndValue(QColor(0xcb, 0xa6, 0xf7));
+    anim->setStartValue(theme.text);
+    anim->setEndValue(theme.accent);
     anim->setEasingCurve(QEasingCurve::OutCubic);
     // Ищем элемент заново на каждый тик (а не храним QListWidgetItem*) —
     // плейлист мог измениться, пока анимация ещё бежит
@@ -3273,23 +3273,25 @@ void MainWindow::updateAlbumArt() {
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
+    const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
     QLinearGradient g(0, 0, 230, 230);
-    g.setColorAt(0.0, QColor(0x31, 0x32, 0x44));
-    g.setColorAt(1.0, QColor(0x18, 0x18, 0x25));
+    g.setColorAt(0.0, theme.surface1);
+    g.setColorAt(1.0, theme.mantle);
     p.setBrush(g); p.setPen(Qt::NoPen);
     p.drawRoundedRect(0, 0, 230, 230, r, r);
-    p.setPen(QColor(0xcb, 0xa6, 0xf7, 60));
-    p.setFont(QFont("Segoe UI", 88));
-    p.drawText(QRect(0, 0, 230, 230), Qt::AlignCenter, "♪");
+    QColor noteColor = theme.accent;
+    noteColor.setAlpha(105);
+    Ico::music(noteColor, 96).paint(&p, QRect(67, 67, 96, 96), Qt::AlignCenter);
     m_albumArt->setPixmap(pm);
     if (m_miniAlbumArt) m_miniAlbumArt->setPixmap(applyRoundedCorners(pm, 40, 6));
 }
 
 void MainWindow::setCurrentTrackVisual(int index) {
+    const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
     for (int i = 0; i < m_playlistWidget->count(); ++i) {
         QListWidgetItem *it = m_playlistWidget->item(i);
         QFont f = it->font(); f.setBold(i == index); it->setFont(f);
-        if (i != index) it->setForeground(QColor(0xcd, 0xd6, 0xf4));
+        if (i != index) it->setForeground(theme.text);
     }
     // Плавный переход цвета — только для новой активной строки
     if (index >= 0 && index < m_playlist.size())
@@ -3325,7 +3327,7 @@ void MainWindow::showAbout() {
     headerL->setSpacing(8);
 
     auto *logoLbl = new QLabel(header);
-    logoLbl->setPixmap(createLogo(88));
+    logoLbl->setPixmap(createLogo(88, ThemeManager::palette(m_cfg.theme, m_cfg.accentColor)));
     logoLbl->setFixedSize(88, 88);
     headerL->addWidget(logoLbl, 0, Qt::AlignHCenter);
 
@@ -3530,7 +3532,8 @@ void MainWindow::checkForUpdates(bool manual) {
         QDialog dialog(this);
         dialog.setObjectName("updateDialog");
         dialog.setWindowTitle("Доступно обновление");
-        dialog.setWindowIcon(QIcon(createLogo(64)));
+        const ThemePalette updateTheme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+        dialog.setWindowIcon(QIcon(createLogo(64, updateTheme)));
         dialog.setModal(true);
         dialog.setFixedWidth(560);
         dialog.setWindowFlag(Qt::WindowContextHelpButtonHint, false);
@@ -3543,7 +3546,7 @@ void MainWindow::checkForUpdates(bool manual) {
         header->setSpacing(16);
         auto *logo = new QLabel(&dialog);
         logo->setFixedSize(64, 64);
-        logo->setPixmap(createLogo(64));
+        logo->setPixmap(createLogo(64, updateTheme));
         header->addWidget(logo, 0, Qt::AlignTop);
 
         auto *heading = new QVBoxLayout;
@@ -3683,7 +3686,6 @@ void MainWindow::checkForUpdates(bool manual) {
             }
             QPushButton#updatePrimary:hover { background-color: ACCENT_HOVER; }
         )";
-        const ThemePalette updateTheme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
         ThemeManager::applyPaletteTokens(dialogStyle, updateTheme);
         dialogStyle.replace("ACCENT_HOVER", updateTheme.accent.lighter(112).name());
         dialogStyle.replace("ACCENT", updateTheme.accent.name());
@@ -4433,7 +4435,7 @@ void MainWindow::scanLibrary()
     // Find or create "Библиотека" tab
     if (m_libraryPlIdx < 0 || m_libraryPlIdx >= m_playlists.size()) {
         saveCurrentPlaylistState();
-        const QString name = "📚 Библиотека";
+    const QString name = "Библиотека";
         m_playlists.append({name, {}, -1});
         m_tabBar->addTab(name);
         m_libraryPlIdx = m_playlists.size() - 1;
