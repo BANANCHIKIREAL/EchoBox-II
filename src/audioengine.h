@@ -36,7 +36,7 @@ class EqPlaybackDevice : public QIODevice {
 public:
     explicit EqPlaybackDevice(QObject *parent = nullptr);
 
-    void setPcm(const QVector<float> &interleavedStereo, int sampleRate);
+    void setPcm(QVector<float> interleavedStereo, int sampleRate);
     void configureOutput(const QAudioFormat &format);
     void setFramePosition(qint64 frame);
     qint64 totalFrames() const { return m_totalFrames.load(); }
@@ -116,6 +116,8 @@ private:
 
     QVector<float> m_pcm;      // накопитель во время декодирования
     int m_sampleRate = 44100;
+    QUrl m_source;
+    bool m_decodedReady = false;
 
     bool   m_pendingPlay   = false;
     qint64 m_pendingSeekMs = -1;

@@ -19,6 +19,7 @@ struct AppSettings {
     QString fontFamily   = "";   // empty = system default
     QString fontFilePath = "";   // path to custom font file (loaded via QFontDatabase)
     QString artShape     = "rounded";
+    QString appIconStyle = "classic";
 
     bool autoPlay       = false;
     bool showVisualizer = true;
@@ -107,6 +108,7 @@ private:
     QButtonGroup  *m_fontGroup       = nullptr;
     QFontComboBox *m_fontFamilyCombo = nullptr;
     QComboBox     *m_artShapeCombo   = nullptr;
+    QComboBox     *m_appIconCombo    = nullptr;
 
     QCheckBox *m_autoPlayChk    = nullptr;
     QCheckBox *m_vizChk         = nullptr;

@@ -8,7 +8,48 @@
 #include <cmath>
 #include "thememanager.h"
 
-inline QPixmap createLogo(int size, const ThemePalette &theme) {
+inline QPixmap createLogo(int size, const ThemePalette &baseTheme,
+                          const QString &style = "classic") {
+    ThemePalette theme = baseTheme;
+    const QString iconStyle = style.toLower();
+    const bool roundedTile = iconStyle == "cosmic" || iconStyle == "aurora"
+        || iconStyle == "sunset" || iconStyle == "ocean"
+        || iconStyle == "mono" || iconStyle == "ruby";
+
+    // App-icon variants are intentionally independent from the UI theme.
+    // Each keeps the EchoBox equalizer mark while changing its own identity.
+    if (iconStyle == "cosmic") {
+        theme.mantle = QColor("#100b25"); theme.surface2 = QColor("#392766");
+        theme.accent = QColor("#a78bfa"); theme.accent2 = QColor("#38bdf8");
+        theme.danger = QColor("#f472b6"); theme.teal = QColor("#67e8f9");
+        theme.subtext0 = QColor("#ddd6fe");
+    } else if (iconStyle == "aurora") {
+        theme.mantle = QColor("#071d22"); theme.surface2 = QColor("#164e63");
+        theme.accent = QColor("#4ade80"); theme.accent2 = QColor("#38bdf8");
+        theme.danger = QColor("#c084fc"); theme.teal = QColor("#2dd4bf");
+        theme.subtext0 = QColor("#ccfbf1");
+    } else if (iconStyle == "sunset") {
+        theme.mantle = QColor("#2a1020"); theme.surface2 = QColor("#71334d");
+        theme.accent = QColor("#fb7185"); theme.accent2 = QColor("#f59e0b");
+        theme.danger = QColor("#f43f5e"); theme.teal = QColor("#fbbf24");
+        theme.subtext0 = QColor("#ffe4e6");
+    } else if (iconStyle == "ocean") {
+        theme.mantle = QColor("#06182b"); theme.surface2 = QColor("#164e7a");
+        theme.accent = QColor("#38bdf8"); theme.accent2 = QColor("#6366f1");
+        theme.danger = QColor("#22d3ee"); theme.teal = QColor("#2dd4bf");
+        theme.subtext0 = QColor("#dbeafe");
+    } else if (iconStyle == "mono") {
+        theme.mantle = QColor("#111318"); theme.surface2 = QColor("#3f4652");
+        theme.accent = QColor("#e2e8f0"); theme.accent2 = QColor("#94a3b8");
+        theme.danger = QColor("#f8fafc"); theme.teal = QColor("#cbd5e1");
+        theme.subtext0 = QColor("#e5e7eb");
+    } else if (iconStyle == "ruby") {
+        theme.mantle = QColor("#240912"); theme.surface2 = QColor("#641d36");
+        theme.accent = QColor("#fb7185"); theme.accent2 = QColor("#a855f7");
+        theme.danger = QColor("#f43f5e"); theme.teal = QColor("#f0abfc");
+        theme.subtext0 = QColor("#ffe4e6");
+    }
+
     QPixmap pm(size, size);
     pm.fill(Qt::transparent);
     QPainter p(&pm);
@@ -32,14 +73,22 @@ inline QPixmap createLogo(int size, const ThemePalette &theme) {
     bg.setColorAt(1.0f, theme.mantle);
     p.setBrush(bg);
     p.setPen(Qt::NoPen);
-    p.drawEllipse(QRectF(s*0.04f, s*0.04f, s*0.92f, s*0.92f));
+    const QRectF bodyRect(s*0.04f, s*0.04f, s*0.92f, s*0.92f);
+    if (roundedTile)
+        p.drawRoundedRect(bodyRect, s * 0.23f, s * 0.23f);
+    else
+        p.drawEllipse(bodyRect);
 
     // Inner ring
     p.setBrush(Qt::NoBrush);
     QColor ring = theme.accent;
     ring.setAlpha(72);
     p.setPen(QPen(ring, s*0.014f));
-    p.drawEllipse(QRectF(s*0.09f, s*0.09f, s*0.82f, s*0.82f));
+    const QRectF ringRect(s*0.09f, s*0.09f, s*0.82f, s*0.82f);
+    if (roundedTile)
+        p.drawRoundedRect(ringRect, s * 0.18f, s * 0.18f);
+    else
+        p.drawEllipse(ringRect);
 
     // EQ bars
     const int   bars    = 5;

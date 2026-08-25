@@ -1,6 +1,7 @@
 #include "settingsdialog.h"
 #include "icons.h"
 #include "thememanager.h"
+#include "logo.h"
 #include <QListWidget>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -28,6 +29,7 @@
 #include <QEasingCurve>
 #include <QTimer>
 #include <QDir>
+#include <QSignalBlocker>
 #include <QDirIterator>
 #include <QMessageBox>
 #include <QSlider>
@@ -259,6 +261,32 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
         refreshThemePreview();
         liveApply();
     });
+
+    auto *appIconRow = new QHBoxLayout;
+    appIconRow->setSpacing(10);
+    auto *appIconLabel = new QLabel("Значок приложения:", tab);
+    m_appIconCombo = new QComboBox(tab);
+    m_appIconCombo->setIconSize({40, 40});
+    m_appIconCombo->setMinimumHeight(46);
+    m_appIconCombo->setMinimumWidth(245);
+    m_appIconCombo->setToolTip("Меняет значок окон и системного трея; от темы интерфейса не зависит");
+    const ThemePalette logoBase = ThemeManager::palette("mocha");
+    const struct { const char *id; const char *name; } appIcons[] = {
+        {"classic", "Classic Pulse"}, {"cosmic", "Cosmic Bloom"},
+        {"aurora", "Aurora Wave"}, {"sunset", "Sunset Pop"},
+        {"ocean", "Deep Ocean"}, {"mono", "Midnight Mono"},
+        {"ruby", "Ruby Beat"},
+    };
+    for (const auto &entry : appIcons)
+        m_appIconCombo->addItem(QIcon(createLogo(40, logoBase, entry.id)),
+                                entry.name, entry.id);
+    const int appIconIndex = m_appIconCombo->findData(m_result.appIconStyle);
+    m_appIconCombo->setCurrentIndex(appIconIndex >= 0 ? appIconIndex : 0);
+    appIconRow->addWidget(appIconLabel);
+    appIconRow->addWidget(m_appIconCombo);
+    appIconRow->addStretch();
+    l->addLayout(appIconRow);
+    m_liveWidgets << m_appIconCombo;
 
     l->addWidget(makeSep());
 
@@ -566,8 +594,16 @@ void SettingsDialog::buildEqualizerTab(QWidget *tab) {
 }
 
 void SettingsDialog::setEqPreset(const float (&gains)[kEqBandCount]) {
-    for (int i = 0; i < kEqBandCount; ++i)
-        m_eqSliders[i]->setValue(int(gains[i]));   // triggers valueChanged -> liveApply for each
+    // Update all eight controls as one operation. Previously a preset emitted
+    // eight complete live-apply cycles (including full theme refreshes).
+    for (int i = 0; i < kEqBandCount; ++i) {
+        const QSignalBlocker blocker(m_eqSliders[i]);
+        const int value = int(gains[i]);
+        m_eqSliders[i]->setValue(value);
+        m_eqValueLabels[i]->setText(QString("%1 дБ").arg(value));
+        m_result.eqBands[i] = float(value);
+    }
+    liveApply();
 }
 
 void SettingsDialog::buildFilesTab(QWidget *tab) {
@@ -877,6 +913,7 @@ void SettingsDialog::browseFolder(QLineEdit *edit) {
 
 void SettingsDialog::collectResult() {
     m_result.theme       = m_themeCombo ? m_themeCombo->currentData().toString() : "mocha";
+    m_result.appIconStyle = m_appIconCombo ? m_appIconCombo->currentData().toString() : "classic";
     m_result.fontSizeIdx = m_fontGroup->checkedId();
     m_result.fontFamily  = m_fontFamilyCombo->currentFont().family();
     // fontFilePath already updated directly in the browse/reset handlers

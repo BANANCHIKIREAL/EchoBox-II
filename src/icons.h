@@ -71,9 +71,11 @@ inline QIcon volume(int level, QColor c, int size = 24) {
     if (level <= 0) {
         p.drawLine(QPointF(16, 9), QPointF(21, 14)); p.drawLine(QPointF(21, 9), QPointF(16, 14));
     } else {
-        if (level >= 1) p.drawArc(QRectF(11.5, 8, 5, 8), -55 * 16, 110 * 16);
-        if (level >= 2) p.drawArc(QRectF(11.5, 5, 10, 14), -52 * 16, 104 * 16);
-        if (level >= 3) p.drawArc(QRectF(11, 2.5, 15, 19), -48 * 16, 96 * 16);
+        if (level >= 1) p.drawArc(QRectF(11, 8, 5, 8), -55 * 16, 110 * 16);
+        if (level >= 2) p.drawArc(QRectF(10.5, 5, 9, 14), -52 * 16, 104 * 16);
+        // Keep the outer wave inside the 24x24 canvas. Previously it reached
+        // x=26, so the maximum-volume icon clipped its last wave.
+        if (level >= 3) p.drawArc(QRectF(10, 2.5, 12, 19), -48 * 16, 96 * 16);
     }
     return QIcon(pm);
 }
@@ -89,10 +91,33 @@ inline QIcon shuffle(QColor c, int size = 24) {
 }
 
 inline void drawRepeat(QPainter &p) {
-    p.drawLine(QPointF(4, 7), QPointF(17, 7)); p.drawLine(QPointF(17, 7), QPointF(20, 10));
-    p.drawLine(QPointF(20, 10), QPointF(20, 7)); p.drawLine(QPointF(20, 7), QPointF(17, 4));
-    p.drawLine(QPointF(20, 17), QPointF(7, 17)); p.drawLine(QPointF(7, 17), QPointF(4, 14));
-    p.drawLine(QPointF(4, 14), QPointF(4, 17)); p.drawLine(QPointF(4, 17), QPointF(7, 20));
+    // Two clean curved arrows based on the supplied repeat icon. The source
+    // image also contains a solid circular background; only the arrow shapes
+    // are reproduced here so their color can still follow the active theme.
+    p.save();
+    const QColor color = p.pen().color();
+    p.setPen(QPen(color, 2.35, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+
+    QPainterPath upper;
+    upper.moveTo(5, 13.5);
+    upper.cubicTo(5, 9.3, 7.3, 7, 11.5, 7);
+    upper.lineTo(18, 7);
+    p.drawPath(upper);
+
+    QPainterPath lower;
+    lower.moveTo(19, 10.5);
+    lower.cubicTo(19, 14.7, 16.7, 17, 12.5, 17);
+    lower.lineTo(6, 17);
+    p.drawPath(lower);
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(color);
+    p.drawPolygon(QPolygonF() << QPointF(17, 3.8) << QPointF(21, 7)
+                              << QPointF(17, 10.2));
+    p.drawPolygon(QPolygonF() << QPointF(7, 13.8) << QPointF(3, 17)
+                              << QPointF(7, 20.2));
+    p.restore();
 }
 
 inline QIcon repeatAll(QColor c, int size = 24) {
@@ -178,7 +203,10 @@ inline QIcon equalizer(QColor c, int size = 24) {
 inline QIcon music(QColor c, int size = 24) {
     QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
     p.drawLine(QPointF(9, 18), QPointF(9, 5)); p.drawLine(QPointF(9, 5), QPointF(19, 3)); p.drawLine(QPointF(19, 3), QPointF(19, 16));
-    p.setBrush(c); p.drawEllipse(QPointF(6.5, 18), 2.5, 2); p.drawEllipse(QPointF(16.5, 16), 2.5, 2); return QIcon(pm);
+    // Filled note heads must not also receive the outline pen: with a
+    // translucent color those two layers produced visible rings.
+    p.setPen(Qt::NoPen); p.setBrush(c);
+    p.drawEllipse(QPointF(6.5, 18), 2.5, 2); p.drawEllipse(QPointF(16.5, 16), 2.5, 2); return QIcon(pm);
 }
 
 inline QIcon arrowUp(QColor c, int size = 24) {

@@ -2,16 +2,12 @@
 #include <QPainter>
 #include <QMouseEvent>
 #include <QAudioBuffer>
-#include <QMediaPlayer>
-#include <QAudioOutput>
+#include <QAudioDecoder>
 #include <cmath>
-
-#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-#include <QAudioBufferOutput>
-#endif
 
 static constexpr int TARGET_BINS = 500;
 static constexpr int H_PAD       = 3;
+static constexpr int ANALYSIS_STRIDE = 4;
 
 WaveformSlider::WaveformSlider(QWidget *parent) : QWidget(parent) {
     setMouseTracking(true);
@@ -20,7 +16,7 @@ WaveformSlider::WaveformSlider(QWidget *parent) : QWidget(parent) {
 }
 
 WaveformSlider::~WaveformSlider() {
-    if (m_loader) m_loader->stop();
+    if (m_decoder) m_decoder->stop();
 }
 
 QSize WaveformSlider::sizeHint() const { return {400, 36}; }
@@ -43,9 +39,6 @@ void WaveformSlider::setValue(int v) {
 // ── Waveform loading ─────────────────────────────────────────────────────────
 
 void WaveformSlider::loadWaveform(const QUrl &url, qint64 durationMs) {
-#if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
-    Q_UNUSED(url) Q_UNUSED(durationMs) return;
-#else
     clearWaveform();
     if (!url.isValid() || durationMs <= 0) return;
 
@@ -56,52 +49,50 @@ void WaveformSlider::loadWaveform(const QUrl &url, qint64 durationMs) {
     m_binsFilled    = 0;
     m_binAccum      = 0.f;
     m_binCount      = 0;
+    m_lastSharedBin = 0;
+    m_decodeFinalized = false;
     m_samplesPerBin = 0;
 
-    if (!m_loader) {
-        m_loader  = new QMediaPlayer(this);
-
-        // Muted output keeps the pipeline active so QAudioBufferOutput gets data
-        m_silence = new QAudioOutput(this);
-        m_silence->setVolume(0.f);
-        m_loader->setAudioOutput(m_silence);
-
-        // Same format as main player — guaranteed to work with the backend
-        QAudioFormat fmt;
-        fmt.setSampleRate(48000);
-        fmt.setChannelCount(2);
-        fmt.setSampleFormat(QAudioFormat::Float);
-        m_loaderBuf = new QAudioBufferOutput(fmt, this);
-        m_loader->setAudioBufferOutput(m_loaderBuf);
-
-        connect(m_loaderBuf, &QAudioBufferOutput::audioBufferReceived,
-                this, &WaveformSlider::onAudioBuffer);
-
-        connect(m_loader, &QMediaPlayer::mediaStatusChanged,
-                this, &WaveformSlider::onLoaderStatus);
+    if (!m_decoder) {
+        // QAudioDecoder runs as fast as the backend can decode. The previous
+        // hidden QMediaPlayer was limited to 4x realtime, so a long track could
+        // take tens of seconds before its waveform was complete.
+        m_decoder = new QAudioDecoder(this);
+        connect(m_decoder, &QAudioDecoder::bufferReady,
+                this, &WaveformSlider::onBufferReady);
+        connect(m_decoder, &QAudioDecoder::finished,
+                this, &WaveformSlider::onDecodeFinished);
     }
 
-    m_loader->setSource(url);
-    m_loader->play();
-#endif
+    m_decoder->setSource(url);
+    m_decoder->start();
 }
 
 void WaveformSlider::setPeaks(const QVector<float> &peaks) {
+    if (m_decoder) m_decoder->stop();
     m_peaks.assign(peaks.begin(), peaks.end());
     m_bins       = int(m_peaks.size());
     m_binsFilled = int(m_peaks.size());
+    m_decodeFinalized = true;
     update();
 }
 
 void WaveformSlider::clearWaveform() {
-    if (m_loader) m_loader->stop();
+    if (m_decoder) m_decoder->stop();
     m_waveformUrl = QUrl();
     m_peaks.clear();
     m_binsFilled    = 0;
     m_binAccum      = 0.f;
     m_binCount      = 0;
+    m_lastSharedBin = 0;
+    m_decodeFinalized = false;
     m_samplesPerBin = 0;
     m_durationMs    = 0;
+    if (m_binsFilled >= m_bins) {
+        m_decoder->stop();
+        onDecodeFinished();
+        return;
+    }
     update();
 }
 
@@ -113,68 +104,80 @@ void WaveformSlider::setBackgroundColor(const QColor &c) { m_background = c; upd
 
 // ── Background decoder slots ─────────────────────────────────────────────────
 
-void WaveformSlider::onAudioBuffer(const QAudioBuffer &buf) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-    if (m_binsFilled >= m_bins || m_bins == 0) return;
+void WaveformSlider::onBufferReady() {
+    if (!m_decoder) return;
+    while (m_decoder->bufferAvailable() && m_binsFilled < m_bins) {
+        const QAudioBuffer buf = m_decoder->read();
+        if (!buf.isValid()) continue;
 
-    const QAudioFormat fmt = buf.format();
-    const int sr  = fmt.sampleRate();
-    const int ch  = fmt.channelCount();
-    const int frames = buf.frameCount();
+        const QAudioFormat fmt = buf.format();
+        const int sr  = fmt.sampleRate();
+        const int ch  = fmt.channelCount();
+        const int frames = buf.frameCount();
+        if (ch <= 0 || frames <= 0 || fmt.sampleFormat() == QAudioFormat::Unknown)
+            continue;
 
-    // Compute samplesPerBin once we know the actual sample rate
-    if (m_samplesPerBin == 0 && sr > 0 && m_durationMs > 0) {
-        const qint64 totalFrames = sr * m_durationMs / 1000;
-        m_samplesPerBin = qMax(1, int(totalFrames / m_bins));
-    }
-    if (m_samplesPerBin == 0) return;
+        if (m_samplesPerBin == 0 && sr > 0 && m_durationMs > 0) {
+            const qint64 totalFrames = qint64(sr) * m_durationMs / 1000;
+            m_samplesPerBin = qMax<qint64>(1, totalFrames / (m_bins * ANALYSIS_STRIDE));
+        }
+        if (m_samplesPerBin == 0) continue;
 
-    const float *data = buf.constData<float>();
-    const int prevFilled = m_binsFilled;
-    for (int i = 0; i < frames && m_binsFilled < m_bins; ++i) {
-        float v = 0.f;
-        for (int c = 0; c < ch; ++c)
-            v += std::abs(data[i * ch + c]);
-        m_binAccum += v / ch;
-        ++m_binCount;
-        if (m_binCount >= m_samplesPerBin) {
-            m_peaks[m_binsFilled++] = m_binAccum / m_binCount;
-            m_binAccum = 0.f;
-            m_binCount = 0;
+        auto sampleAt = [&buf, &fmt](int index) -> float {
+            switch (fmt.sampleFormat()) {
+            case QAudioFormat::Float:
+                return buf.constData<float>()[index];
+            case QAudioFormat::Int16:
+                return buf.constData<qint16>()[index] / 32768.0f;
+            case QAudioFormat::Int32:
+                return float(buf.constData<qint32>()[index] / 2147483648.0);
+            case QAudioFormat::UInt8:
+                return (int(buf.constData<quint8>()[index]) - 128) / 128.0f;
+            default:
+                return 0.f;
+            }
+        };
+        // Four-times decimation is far above the visual resolution of 500
+        // bars and cuts amplitude-analysis work substantially.
+        for (int i = 0; i < frames && m_binsFilled < m_bins; i += ANALYSIS_STRIDE) {
+            float v = 0.f;
+            for (int c = 0; c < ch; ++c)
+                v += std::abs(sampleAt(i * ch + c));
+            m_binAccum += v / ch;
+            ++m_binCount;
+            if (m_binCount >= m_samplesPerBin) {
+                m_peaks[m_binsFilled++] = m_binAccum / m_binCount;
+                m_binAccum = 0.f;
+                m_binCount = 0;
+            }
         }
     }
     update();
 
-    // Send partial peaks to mini slider every 25 bins so it updates progressively
-    if (m_binsFilled != prevFilled && (m_binsFilled % 25 == 0 || m_binsFilled == m_bins))
+    // Update the mini player progressively without copying on every buffer.
+    if (m_binsFilled - m_lastSharedBin >= 10 || m_binsFilled == m_bins) {
+        m_lastSharedBin = m_binsFilled;
         emit peaksReady(m_waveformUrl,
                         QVector<float>(m_peaks.begin(), m_peaks.begin() + m_binsFilled));
-#else
-    Q_UNUSED(buf)
-#endif
+    }
 }
 
-void WaveformSlider::onLoaderStatus(QMediaPlayer::MediaStatus status) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-    if (status == QMediaPlayer::LoadedMedia) {
-        // Speed up decoding after the media is ready
-        m_loader->setPlaybackRate(4.0);
-    } else if (status == QMediaPlayer::EndOfMedia && m_binsFilled > 0) {
-        // Normalise peaks
-        float peak = 0.f;
-        for (float v : m_peaks) peak = std::max(peak, v);
-        if (peak > 0.f)
-            for (float &v : m_peaks) v /= peak;
-        m_peaks.resize(m_binsFilled);
-        m_loader->stop();
-        update();
-        const QVector<float> completed(m_peaks.begin(), m_peaks.end());
-        emit peaksReady(m_waveformUrl, completed);
-        emit waveformReady(m_waveformUrl, m_durationMs, completed);
-    }
-#else
-    Q_UNUSED(status)
-#endif
+void WaveformSlider::onDecodeFinished() {
+    if (m_decodeFinalized) return;
+    m_decodeFinalized = true;
+    if (m_binCount > 0 && m_binsFilled < m_bins)
+        m_peaks[m_binsFilled++] = m_binAccum / m_binCount;
+    if (m_binsFilled <= 0) return;
+
+    float peak = 0.f;
+    for (int i = 0; i < m_binsFilled; ++i) peak = std::max(peak, m_peaks[i]);
+    if (peak > 0.f)
+        for (int i = 0; i < m_binsFilled; ++i) m_peaks[i] /= peak;
+    m_peaks.resize(m_binsFilled);
+    update();
+    const QVector<float> completed(m_peaks.begin(), m_peaks.end());
+    emit peaksReady(m_waveformUrl, completed);
+    emit waveformReady(m_waveformUrl, m_durationMs, completed);
 }
 
 // ── Painting ─────────────────────────────────────────────────────────────────

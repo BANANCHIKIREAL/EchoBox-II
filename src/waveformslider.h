@@ -4,13 +4,8 @@
 #include <QUrl>
 #include <vector>
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-#include <QMediaPlayer>
-#endif
-
-class QAudioOutput;
-class QAudioBufferOutput;
 class QAudioBuffer;
+class QAudioDecoder;
 
 class WaveformSlider : public QWidget {
     Q_OBJECT
@@ -51,10 +46,8 @@ protected:
     void leaveEvent(QEvent *)      override;
 
 private:
-#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
-    void onAudioBuffer(const QAudioBuffer &buf);
-    void onLoaderStatus(QMediaPlayer::MediaStatus status);
-#endif
+    void onBufferReady();
+    void onDecodeFinished();
 
     int  m_min = 0, m_max = 0, m_value = 0;
     bool m_dragging = false;
@@ -67,12 +60,12 @@ private:
     float  m_binAccum      = 0.f;
     int    m_binCount      = 0;
     int    m_binsFilled    = 0;
+    int    m_lastSharedBin = 0;
+    bool   m_decodeFinalized = false;
     qint64 m_durationMs    = 0;
     QUrl   m_waveformUrl;
 
-    QMediaPlayer       *m_loader    = nullptr;
-    QAudioOutput       *m_silence   = nullptr;
-    QAudioBufferOutput *m_loaderBuf = nullptr;
+    QAudioDecoder *m_decoder = nullptr;
 
     QColor m_accent { 0xcb, 0xa6, 0xf7 };
     QColor m_track  { 0x45, 0x47, 0x5a };
