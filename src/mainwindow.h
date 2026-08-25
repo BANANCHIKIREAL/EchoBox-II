@@ -299,6 +299,7 @@ private:
     QLabel      *m_loadingPercent = nullptr;
     QPropertyAnimation *m_loadingAnim = nullptr;   // текущий fade-in/out баннера (для отмены гонок)
     QWidget     *m_miniLoadingPanel = nullptr;
+    QLabel      *m_miniLoadingIcon = nullptr;
     QProgressBar *m_miniLoadingBar = nullptr;      // компактный аналог для мини-плеера
     QLabel      *m_miniLoadingPercent = nullptr;
 

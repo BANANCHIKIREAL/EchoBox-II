@@ -217,4 +217,20 @@ inline QIcon arrowDown(QColor c, int size = 24) {
     QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size); p.drawLine(12, 4, 12, 19); p.drawLine(6, 13, 12, 19); p.drawLine(18, 13, 12, 19); return QIcon(pm);
 }
 
+inline QIcon download(QColor c, int size = 24) {
+    QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size, 2.2);
+    p.drawLine(QPointF(12, 3.5), QPointF(12, 14.5));
+    p.drawLine(QPointF(7.5, 10.5), QPointF(12, 15));
+    p.drawLine(QPointF(16.5, 10.5), QPointF(12, 15));
+    QPainterPath tray;
+    tray.moveTo(5, 16.5);
+    tray.lineTo(5, 18.5);
+    tray.quadTo(5, 20.5, 7, 20.5);
+    tray.lineTo(17, 20.5);
+    tray.quadTo(19, 20.5, 19, 18.5);
+    tray.lineTo(19, 16.5);
+    p.drawPath(tray);
+    return QIcon(pm);
+}
+
 } // namespace Ico
