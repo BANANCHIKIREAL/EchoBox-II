@@ -7,6 +7,7 @@
 #include <QMediaDevices>
 #include <cmath>
 #include <cstring>
+#include <utility>
 
 const int kEqBandFreqs[kEqBandCount] = {60, 150, 400, 1000, 2400, 6000, 12000, 16000};
 
@@ -53,8 +54,8 @@ EqPlaybackDevice::EqPlaybackDevice(QObject *parent) : QIODevice(parent) {
     open(QIODevice::ReadOnly);
 }
 
-void EqPlaybackDevice::setPcm(const QVector<float> &interleavedStereo, int sampleRate) {
-    m_pcm = interleavedStereo;
+void EqPlaybackDevice::setPcm(QVector<float> interleavedStereo, int sampleRate) {
+    m_pcm = std::move(interleavedStereo);
     m_sourceSampleRate = sampleRate;
     m_totalFrames.store(m_pcm.size() / 2);
     m_frameCursor.store(0.0);
@@ -207,9 +208,21 @@ AudioEngine::~AudioEngine() {
 void AudioEngine::setSource(const QUrl &url) {
     if (m_sink) m_sink->stop();
     if (m_decoder) m_decoder->stop();
-    m_pcm.clear();
     m_pendingPlay = false;
     m_pendingSeekMs = -1;
+
+    // Disabling and re-enabling EQ for the same track should be immediate.
+    // The decoded PCM already lives in EqPlaybackDevice, so reuse it instead
+    // of decoding the whole file again.
+    if (url == m_source && m_decodedReady && m_device->totalFrames() > 0) {
+        QMetaObject::invokeMethod(this, [this]{ emit ready(); }, Qt::QueuedConnection);
+        return;
+    }
+
+    m_source = url;
+    m_decodedReady = false;
+    m_pcm.clear();
+    m_device->setPcm({}, 44100);
 
     if (!m_decoder) {
         m_decoder = new QAudioDecoder(this);
@@ -290,13 +303,14 @@ void AudioEngine::onDecodeFinished() {
         emit decodeError("Декодер не вернул звуковые данные для этого файла.");
         return;
     }
-    m_device->setPcm(m_pcm, m_sampleRate > 0 ? m_sampleRate : 44100);
+    m_device->setPcm(std::move(m_pcm), m_sampleRate > 0 ? m_sampleRate : 44100);
     if (!ensureSink(m_sampleRate)) {
         m_pendingPlay = false;
         m_pendingSeekMs = -1;
         emit decodeError("Устройство вывода звука не поддерживает доступный аудиоформат.");
         return;
     }
+    m_decodedReady = true;
     emit ready();
 
     if (m_pendingSeekMs >= 0) {
@@ -310,6 +324,7 @@ void AudioEngine::onDecodeFinished() {
 }
 
 void AudioEngine::onDecodeError() {
+    m_decodedReady = false;
     const QString details = m_decoder->errorString().trimmed();
     emit decodeError(details.isEmpty() ? "Неизвестная ошибка декодирования." : details);
 }

@@ -258,6 +258,7 @@ private:
     QUrl         m_eqSource;
     void syncEqEngineToCurrentTrack();
     void stopEqEngine();
+    void setEqStatus(const QString &state, const QString &toolTip);
     void playerSeek(qint64 ms);
 
     // ── State ────────────────────────────────────────────────────────────────
@@ -323,6 +324,7 @@ private:
     QToolButton *m_muteBtn      = nullptr;
     QSlider     *m_volumeSlider = nullptr;
     QLabel      *m_volumeLabel  = nullptr;
+    QLabel      *m_eqStatusLabel = nullptr;
 
     // ── Mini player ──────────────────────────────────────────────────────────
     QWidget     *m_miniBar        = nullptr;
@@ -342,6 +344,10 @@ private:
     QLineEdit   *m_searchEdit     = nullptr;
     QLabel      *m_playlistInfo   = nullptr;
     QListWidget *m_playlistWidget = nullptr;
+    QToolButton *m_playlistUpBtn  = nullptr;
+    QToolButton *m_playlistDownBtn = nullptr;
+    QToolButton *m_playlistRemoveBtn = nullptr;
+    QToolButton *m_playlistClearBtn = nullptr;
 
     // ── Multi-playlist data ───────────────────────────────────────────────────
     QVector<PlaylistEntry> m_playlists;

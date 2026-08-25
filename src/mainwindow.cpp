@@ -25,6 +25,8 @@
 #include <QSlider>
 #include <QLabel>
 #include <QListWidget>
+#include <QScrollBar>
+#include <QWheelEvent>
 #include <QFileDialog>
 #include <QStandardPaths>
 #include <QDragEnterEvent>
@@ -78,6 +80,7 @@
 #include <QNetworkRequest>
 #include <QDesktopServices>
 #include <QPushButton>
+#include <QStyle>
 #include <functional>
 #include <numeric>
 #include <algorithm>
@@ -130,6 +133,49 @@ const QStringList MainWindow::MEDIA_FILTER = {
     "Аудио (*.mp3 *.wav *.ogg *.flac *.aac *.m4a *.opus *.wma)",
     "Видео (*.mp4 *.mkv *.avi *.mov *.webm *.wmv)",
     "Все файлы (*)"
+};
+
+// ─── Smooth playlist scrolling ───────────────────────────────────────────────
+
+class SmoothPlaylistWidget final : public QListWidget {
+public:
+    explicit SmoothPlaylistWidget(QWidget *parent = nullptr)
+        : QListWidget(parent),
+          m_scrollAnimation(new QPropertyAnimation(verticalScrollBar(), "value", this)) {
+        setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+        m_scrollAnimation->setEasingCurve(QEasingCurve::OutCubic);
+    }
+
+protected:
+    void wheelEvent(QWheelEvent *event) override {
+        int delta = 0;
+        if (!event->pixelDelta().isNull()) {
+            delta = -event->pixelDelta().y();
+        } else if (!event->angleDelta().isNull()) {
+            delta = -qRound(event->angleDelta().y() / 120.0 * 72.0);
+        }
+
+        if (delta == 0) {
+            QListWidget::wheelEvent(event);
+            return;
+        }
+
+        QScrollBar *bar = verticalScrollBar();
+        const int base = m_scrollAnimation->state() == QAbstractAnimation::Running
+            ? m_scrollTarget : bar->value();
+        m_scrollTarget = qBound(bar->minimum(), base + delta, bar->maximum());
+
+        m_scrollAnimation->stop();
+        m_scrollAnimation->setStartValue(bar->value());
+        m_scrollAnimation->setEndValue(m_scrollTarget);
+        m_scrollAnimation->setDuration(qBound(110, 110 + qAbs(m_scrollTarget - bar->value()), 230));
+        m_scrollAnimation->start();
+        event->accept();
+    }
+
+private:
+    QPropertyAnimation *m_scrollAnimation = nullptr;
+    int m_scrollTarget = 0;
 };
 
 // ─── Custom playlist delegate (right-align duration) ─────────────────────────
@@ -264,6 +310,8 @@ MainWindow::MainWindow(QWidget *parent)
         m_eqPending = false;
         m_eqActive = true;
         applyVolume();
+        setEqStatus("active", "Эквалайзер включён и применяется к текущему треку");
+        statusBar()->showMessage("Эквалайзер включён", 2500);
     });
     connect(m_eqEngine, &AudioEngine::decodeError, this, [this](const QString &msg){
         if (!m_eqPending && !m_eqActive) return;
@@ -271,6 +319,7 @@ MainWindow::MainWindow(QWidget *parent)
         m_eqActive = false;
         m_eqSource = QUrl();
         applyVolume();
+        setEqStatus("error", "Эквалайзер не удалось применить к текущему треку");
         showCopyableError("Эквалайзер недоступен для этого трека",
             "Не удалось декодировать трек для эквалайзера — играет обычный "
             "плеер без него.\n\n" + msg);
@@ -319,6 +368,7 @@ MainWindow::MainWindow(QWidget *parent)
     setupUi();
     setupTray();
     setupConnections();
+    statusBar()->setSizeGripEnabled(false);
     applyTheme();
     loadSettings();
 
@@ -327,7 +377,7 @@ MainWindow::MainWindow(QWidget *parent)
     resize(940, 660);
     setWindowTitle("EchoBox II");
 
-    const QIcon icon(createLogo(128, ThemeManager::palette(m_cfg.theme, m_cfg.accentColor)));
+    const QIcon icon(createLogo(128, ThemeManager::palette("mocha"), m_cfg.appIconStyle));
     setWindowIcon(icon);
 
     // Тихая фоновая проверка обновлений (не мешает старту, не спамит окнами)
@@ -605,6 +655,13 @@ void MainWindow::setupUi() {
     m_speedCombo->setToolTip("Скорость воспроизведения");
     m_speedCombo->setFixedWidth(68);
 
+    m_eqStatusLabel = new QLabel("EQ", this);
+    m_eqStatusLabel->setObjectName("eqStatus");
+    m_eqStatusLabel->setProperty("state", "off");
+    m_eqStatusLabel->setAlignment(Qt::AlignCenter);
+    m_eqStatusLabel->setFixedSize(38, 24);
+    m_eqStatusLabel->setToolTip("Эквалайзер выключен");
+
 
     // Музыка → микрофон (через EchoBox APO, установи apo\install.bat)
     m_micBtn = mkBtn("ЛКМ — музыка в микрофон вкл/выкл\nПКМ — громкость и «только музыка»", "toggleBtn", 30);
@@ -624,6 +681,7 @@ void MainWindow::setupUi() {
     c2->addWidget(m_volumeLabel);
     c2->addSpacing(16);
     c2->addWidget(m_speedCombo);
+    c2->addWidget(m_eqStatusLabel);
     c2->addSpacing(12);
     c2->addWidget(m_micBtn);
     c2->addStretch();
@@ -795,7 +853,9 @@ void MainWindow::setupUi() {
     {
         QHBoxLayout *tabRow = new QHBoxLayout;
         tabRow->setSpacing(4);
-        tabRow->setContentsMargins(0, 0, 0, 0);
+        // Leave a small gap below the tabs so their border does not visually
+        // collide with the playlist panel separator.
+        tabRow->setContentsMargins(0, 0, 0, 4);
 
         m_tabBar = new QTabBar(this);
         m_tabBar->setObjectName("playlistTabBar");
@@ -840,25 +900,25 @@ void MainWindow::setupUi() {
         return b;
     };
     const QColor smallIconColor(0xa6, 0xad, 0xc8);
-    auto *upBtn  = mkSmall(Ico::arrowUp(smallIconColor, 15), "Вверх");
-    auto *dnBtn  = mkSmall(Ico::arrowDown(smallIconColor, 15), "Вниз");
-    auto *rmBtn  = mkSmall(Ico::closeIcon(smallIconColor, 15), "Удалить  Del");
+    m_playlistUpBtn = mkSmall(Ico::arrowUp(smallIconColor, 15), "Вверх");
+    m_playlistDownBtn = mkSmall(Ico::arrowDown(smallIconColor, 15), "Вниз");
+    m_playlistRemoveBtn = mkSmall(Ico::closeIcon(smallIconColor, 15), "Удалить  Del");
 
-    auto *clrBtn = new QToolButton(this);
-    clrBtn->setObjectName("clearBtn");
-    clrBtn->setFixedSize(26, 26);
-    clrBtn->setIcon(Ico::trash(QColor(0xa6,0xad,0xc8), 15));
-    clrBtn->setIconSize({15, 15});
-    clrBtn->setToolTip("Очистить плейлист");
+    m_playlistClearBtn = new QToolButton(this);
+    m_playlistClearBtn->setObjectName("clearBtn");
+    m_playlistClearBtn->setFixedSize(26, 26);
+    m_playlistClearBtn->setIcon(Ico::trash(smallIconColor, 15));
+    m_playlistClearBtn->setIconSize({15, 15});
+    m_playlistClearBtn->setToolTip("Очистить плейлист");
 
     plH->addWidget(m_searchEdit, 1);
     plH->addWidget(m_playlistInfo);
-    plH->addWidget(upBtn); plH->addWidget(dnBtn);
-    plH->addWidget(rmBtn); plH->addWidget(clrBtn);
+    plH->addWidget(m_playlistUpBtn); plH->addWidget(m_playlistDownBtn);
+    plH->addWidget(m_playlistRemoveBtn); plH->addWidget(m_playlistClearBtn);
     plL->addLayout(plH);
 
     // List
-    m_playlistWidget = new QListWidget(this);
+    m_playlistWidget = new SmoothPlaylistWidget(this);
     m_playlistWidget->setObjectName("playlist");
     m_playlistWidget->setAlternatingRowColors(true);
     m_playlistWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -870,10 +930,10 @@ void MainWindow::setupUi() {
     plL->addWidget(m_playlistWidget, 1);
     root->addWidget(m_playlistPanel, 1);
 
-    connect(upBtn,  &QToolButton::clicked, this, &MainWindow::moveTrackUp);
-    connect(dnBtn,  &QToolButton::clicked, this, &MainWindow::moveTrackDown);
-    connect(rmBtn,  &QToolButton::clicked, this, &MainWindow::removeSelectedTracks);
-    connect(clrBtn, &QToolButton::clicked, this, &MainWindow::clearPlaylist);
+    connect(m_playlistUpBtn, &QToolButton::clicked, this, &MainWindow::moveTrackUp);
+    connect(m_playlistDownBtn, &QToolButton::clicked, this, &MainWindow::moveTrackDown);
+    connect(m_playlistRemoveBtn, &QToolButton::clicked, this, &MainWindow::removeSelectedTracks);
+    connect(m_playlistClearBtn, &QToolButton::clicked, this, &MainWindow::clearPlaylist);
 
     // ── Transport icons ───────────────────────────────────────────────────────
     {
@@ -896,7 +956,7 @@ void MainWindow::setupUi() {
 
 void MainWindow::setupTray() {
     const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
-    m_tray = new QSystemTrayIcon(QIcon(createLogo(64, theme)), this);
+    m_tray = new QSystemTrayIcon(QIcon(createLogo(64, ThemeManager::palette("mocha"))), this);
     m_tray->setToolTip("EchoBox II");
 
     auto *tm = new QMenu(this);
@@ -1068,6 +1128,29 @@ void MainWindow::applyTheme() {
         QLabel#albumLabel  { color: #6c7086; font-size: 11px; font-style: italic; }
         QLabel#timeLabel   { color: #a6adc8; font-size: 12px; font-variant-numeric: tabular-nums; }
         QLabel#volLabel    { color: #a6adc8; font-size: 12px; }
+        QLabel#eqStatus {
+            color: #6c7086;
+            background-color: #252537;
+            border: 1px solid #313244;
+            border-radius: 7px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+        QLabel#eqStatus[state="pending"] {
+            color: #fab387;
+            border-color: #fab387;
+            background-color: #313244;
+        }
+        QLabel#eqStatus[state="active"] {
+            color: #181825;
+            border-color: ACCENT;
+            background-color: ACCENT;
+        }
+        QLabel#eqStatus[state="error"] {
+            color: #f38ba8;
+            border-color: #f38ba8;
+            background-color: #45283a;
+        }
         QLabel#playlistInfo{ color: #6c7086; font-size: 11px; padding: 0 6px; }
         QLabel#miniTitle   { color: #cdd6f4; font-size: 13px; font-weight: bold; padding: 0 6px; }
 
@@ -1560,6 +1643,10 @@ void MainWindow::applyTheme() {
     const QColor shuffleColor = m_shuffle ? theme.accent : theme.subtext0;
     if (m_shuffleBtn) m_shuffleBtn->setIcon(Ico::shuffle(shuffleColor, 18));
     if (m_miniShuffleBtn) m_miniShuffleBtn->setIcon(Ico::shuffle(shuffleColor, 15));
+    if (m_playlistUpBtn) m_playlistUpBtn->setIcon(Ico::arrowUp(theme.subtext1, 15));
+    if (m_playlistDownBtn) m_playlistDownBtn->setIcon(Ico::arrowDown(theme.subtext1, 15));
+    if (m_playlistRemoveBtn) m_playlistRemoveBtn->setIcon(Ico::closeIcon(theme.subtext1, 15));
+    if (m_playlistClearBtn) m_playlistClearBtn->setIcon(Ico::trash(theme.subtext1, 15));
     setVolume(m_volumeSlider->value());
     updateRepeatButton();
 
@@ -1567,11 +1654,12 @@ void MainWindow::applyTheme() {
     if (g_delegate) g_delegate->setTheme(theme);
     if (m_playlistWidget) m_playlistWidget->viewport()->update();
 
-    // The application identity is part of the selected theme too: window,
-    // task switcher, tray and album placeholders update immediately.
-    const QIcon themedLogo(createLogo(128, theme));
-    setWindowIcon(themedLogo);
-    if (m_tray) m_tray->setIcon(themedLogo);
+    // The selected application icon has its own palette and therefore stays
+    // unchanged when only the interface theme changes.
+    const QIcon appIcon(createLogo(128, ThemeManager::palette("mocha"), m_cfg.appIconStyle));
+    qApp->setWindowIcon(appIcon);
+    setWindowIcon(appIcon);
+    if (m_tray) m_tray->setIcon(appIcon);
 
     if (m_seekSlider) {
         m_seekSlider->setAccentColor(theme.accent);
@@ -1619,6 +1707,7 @@ void MainWindow::loadSettings() {
     if (!m_cfg.fontFilePath.isEmpty())
         QFontDatabase::addApplicationFont(m_cfg.fontFilePath);
     m_cfg.artShape       = m_settings.value("cfg/artShape", "rounded").toString();
+    m_cfg.appIconStyle   = m_settings.value("cfg/appIconStyle", "classic").toString();
     m_cfg.autoPlay       = m_settings.value("cfg/autoPlay", false).toBool();
     m_cfg.showVisualizer = m_settings.value("cfg/showVisualizer", true).toBool();
     m_cfg.crossfadeSecs  = m_settings.value("cfg/crossfadeSecs", 0).toInt();
@@ -1673,6 +1762,7 @@ void MainWindow::saveSettings() {
     m_settings.setValue("cfg/fontFamily",     m_cfg.fontFamily);
     m_settings.setValue("cfg/fontFilePath",   m_cfg.fontFilePath);
     m_settings.setValue("cfg/artShape",       m_cfg.artShape);
+    m_settings.setValue("cfg/appIconStyle",   m_cfg.appIconStyle);
     m_settings.setValue("cfg/autoPlay",       m_cfg.autoPlay);
     m_settings.setValue("cfg/showVisualizer", m_cfg.showVisualizer);
     m_settings.setValue("cfg/crossfadeSecs",  m_cfg.crossfadeSecs);
@@ -1815,6 +1905,8 @@ void MainWindow::addFiles(const QList<QUrl> &urls) {
         if (m_cfg.showTrackIcons) applyTrackIcon(item, url);
     }
     updatePlaylistInfo();
+    if (!m_searchEdit->text().trimmed().isEmpty())
+        onSearchChanged(m_searchEdit->text());
     updateDuplicateHighlights();
     scheduleScan(urls);
     if (wasEmpty && !m_playlist.isEmpty()) playTrack(0);
@@ -1973,32 +2065,41 @@ void MainWindow::rebuildPlaylistFromWidget() {
 }
 
 void MainWindow::onSearchChanged(const QString &text) {
-    const QString q = text.trimmed().toLower();
-    const QColor dimColor(0x45, 0x47, 0x5a);
-    const QColor normalColor(0xcd, 0xd6, 0xf4);
+    const QString query = text.trimmed();
 
     int matches = 0;
     const int total = m_playlistWidget->count();
 
     for (int i = 0; i < total; ++i) {
         QListWidgetItem *it = m_playlistWidget->item(i);
-        if (q.isEmpty()) {
-            it->setForeground(normalColor);
+        if (query.isEmpty()) {
             it->setHidden(false);
         } else {
-            const QString dispText = it->text().toLower();
-            const QString title    = it->data(Qt::UserRole + 2).toString().toLower();
-            const QString artist   = it->data(Qt::UserRole + 3).toString().toLower();
-            const QString album    = it->data(Qt::UserRole + 4).toString().toLower();
-            const bool hit = dispText.contains(q) || title.contains(q)
-                          || artist.contains(q)   || album.contains(q);
-            it->setForeground(hit ? normalColor : dimColor);
-            it->setHidden(false);
+            const QUrl url = it->data(Qt::UserRole).toUrl();
+            const QStringList searchable = {
+                it->text(),
+                it->data(Qt::UserRole + 2).toString(),
+                it->data(Qt::UserRole + 3).toString(),
+                it->data(Qt::UserRole + 4).toString(),
+                url.isLocalFile() ? QFileInfo(url.toLocalFile()).completeBaseName()
+                                  : url.toString(),
+            };
+            bool hit = false;
+            for (const QString &value : searchable) {
+                if (value.contains(query, Qt::CaseInsensitive)) {
+                    hit = true;
+                    break;
+                }
+            }
+            // The custom playlist delegate ignores QListWidgetItem foreground
+            // colors, so the old "dim unmatched rows" approach had no visible
+            // effect. A search now behaves as an actual filter.
+            it->setHidden(!hit);
             if (hit) ++matches;
         }
     }
 
-    if (!q.isEmpty())
+    if (!query.isEmpty())
         m_playlistInfo->setText(QString("%1 из %2").arg(matches).arg(total));
     else
         updatePlaylistInfo();
@@ -2342,6 +2443,8 @@ int MainWindow::insertStreamPlaceholder(const QUrl &pageUrl) {
     m_playlistWidget->addItem(item);
 
     updatePlaylistInfo();
+    if (!m_searchEdit->text().trimmed().isEmpty())
+        onSearchChanged(m_searchEdit->text());
     return index;
 }
 
@@ -2387,6 +2490,8 @@ void MainWindow::updateStreamPlaceholder(const QUrl &pageUrl, bool ok, const QSt
     }
 
     updateDuplicateHighlights();
+    if (!m_searchEdit->text().trimmed().isEmpty())
+        onSearchChanged(m_searchEdit->text());
     fetchStreamThumbnail(pageUrl, thumbnailUrl);
 }
 
@@ -2965,6 +3070,8 @@ void MainWindow::onMetaDataChanged() {
             if (!album.isEmpty())  it->setData(Qt::UserRole + 4, album);
         }
     }
+    if (!m_searchEdit->text().trimmed().isEmpty())
+        onSearchChanged(m_searchEdit->text());
 
     // Обновить Discord с реальным названием из тегов
     if (m_discord && m_cfg.discordEnabled && m_player->playbackState() == QMediaPlayer::PlayingState)
@@ -3279,8 +3386,9 @@ void MainWindow::updateAlbumArt() {
     g.setColorAt(1.0, theme.mantle);
     p.setBrush(g); p.setPen(Qt::NoPen);
     p.drawRoundedRect(0, 0, 230, 230, r, r);
-    QColor noteColor = theme.accent;
-    noteColor.setAlpha(105);
+    // Keep the placeholder subdued without semi-transparent overlapping
+    // strokes, which made the note look striped/ringed on some themes.
+    const QColor noteColor = theme.accent.darker(128);
     Ico::music(noteColor, 96).paint(&p, QRect(67, 67, 96, 96), Qt::AlignCenter);
     m_albumArt->setPixmap(pm);
     if (m_miniAlbumArt) m_miniAlbumArt->setPixmap(applyRoundedCorners(pm, 40, 6));
@@ -3327,7 +3435,7 @@ void MainWindow::showAbout() {
     headerL->setSpacing(8);
 
     auto *logoLbl = new QLabel(header);
-    logoLbl->setPixmap(createLogo(88, ThemeManager::palette(m_cfg.theme, m_cfg.accentColor)));
+    logoLbl->setPixmap(createLogo(88, ThemeManager::palette("mocha"), m_cfg.appIconStyle));
     logoLbl->setFixedSize(88, 88);
     headerL->addWidget(logoLbl, 0, Qt::AlignHCenter);
 
@@ -3533,7 +3641,7 @@ void MainWindow::checkForUpdates(bool manual) {
         dialog.setObjectName("updateDialog");
         dialog.setWindowTitle("Доступно обновление");
         const ThemePalette updateTheme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
-        dialog.setWindowIcon(QIcon(createLogo(64, updateTheme)));
+        dialog.setWindowIcon(QIcon(createLogo(64, ThemeManager::palette("mocha"), m_cfg.appIconStyle)));
         dialog.setModal(true);
         dialog.setFixedWidth(560);
         dialog.setWindowFlag(Qt::WindowContextHelpButtonHint, false);
@@ -3546,7 +3654,7 @@ void MainWindow::checkForUpdates(bool manual) {
         header->setSpacing(16);
         auto *logo = new QLabel(&dialog);
         logo->setFixedSize(64, 64);
-        logo->setPixmap(createLogo(64, updateTheme));
+        logo->setPixmap(createLogo(64, ThemeManager::palette("mocha"), m_cfg.appIconStyle));
         header->addWidget(logo, 0, Qt::AlignTop);
 
         auto *heading = new QVBoxLayout;
@@ -3971,6 +4079,8 @@ void MainWindow::loadPlaylistState(int index) {
         setCurrentTrackVisual(m_currentIndex);
 
     updatePlaylistInfo();
+    if (!m_searchEdit->text().trimmed().isEmpty())
+        onSearchChanged(m_searchEdit->text());
     resetWaveformUi();
     m_coverPixmap = QPixmap();
     updateAlbumArt();
@@ -4073,6 +4183,17 @@ void MainWindow::playerSeek(qint64 ms) {
     if (m_eqActive) m_eqEngine->setPosition(ms);
 }
 
+void MainWindow::setEqStatus(const QString &state, const QString &toolTip) {
+    if (!m_eqStatusLabel) return;
+    m_eqStatusLabel->setProperty("state", state);
+    m_eqStatusLabel->setText(state == "pending" ? "EQ…"
+                             : state == "error" ? "EQ!" : "EQ");
+    m_eqStatusLabel->setToolTip(toolTip);
+    m_eqStatusLabel->style()->unpolish(m_eqStatusLabel);
+    m_eqStatusLabel->style()->polish(m_eqStatusLabel);
+    m_eqStatusLabel->update();
+}
+
 void MainWindow::stopEqEngine() {
     m_eqPending = false;
     m_eqActive = false;
@@ -4086,18 +4207,39 @@ void MainWindow::syncEqEngineToCurrentTrack() {
     const bool wantEq = m_cfg.eqEnabled && !src.isEmpty() &&
                          src.isLocalFile() && !isVideoFile(src);
     if (!wantEq) {
+        const bool wasRunning = m_eqActive || m_eqPending;
         if (m_eqActive || m_eqPending) stopEqEngine();
+        if (m_cfg.eqEnabled && !src.isEmpty()) {
+            setEqStatus("error", isVideoFile(src)
+                ? "Эквалайзер не применяется к видео"
+                : "Эквалайзер применяется только к локальному аудио");
+            if (wasRunning)
+                statusBar()->showMessage("Эквалайзер недоступен для этого трека", 3500);
+        } else {
+            setEqStatus("off", m_cfg.eqEnabled
+                ? "Эквалайзер включён в настройках — выберите локальный аудиотрек"
+                : "Эквалайзер выключен");
+            if (wasRunning && !m_cfg.eqEnabled)
+                statusBar()->showMessage("Эквалайзер выключен", 2000);
+        }
         return;
     }
 
     // При повторном применении настроек не запускаем декодирование заново.
-    if (m_eqSource == src && (m_eqActive || m_eqPending)) return;
+    if (m_eqSource == src && (m_eqActive || m_eqPending)) {
+        setEqStatus(m_eqActive ? "active" : "pending",
+                    m_eqActive ? "Эквалайзер включён и применяется к текущему треку"
+                               : "Эквалайзер подготавливает текущий трек");
+        return;
+    }
 
     // Пока новый трек декодируется, обычный QMediaPlayer остаётся слышимым.
     // Это исключает тишину на неподдерживаемых/повреждённых файлах.
     stopEqEngine();
     m_eqSource = src;
     m_eqPending = true;
+    setEqStatus("pending", "Эквалайзер подготавливает текущий трек");
+    statusBar()->showMessage("Эквалайзер включается — подготовка аудио…");
     m_eqEngine->setSource(src);
 }
 
@@ -4369,8 +4511,17 @@ void MainWindow::openSettings() {
     SettingsDialog dlg(m_cfg, this);
     connect(&dlg, &SettingsDialog::applied, this, [this, applyEqSettings](const AppSettings &s) {
         const AppSettings prev = m_cfg;
+        const bool appearanceChanged = s.theme != prev.theme
+            || s.accentColor != prev.accentColor
+            || s.fontSizeIdx != prev.fontSizeIdx
+            || s.fontFamily != prev.fontFamily
+            || s.fontFilePath != prev.fontFilePath
+            || s.artShape != prev.artShape
+            || s.appIconStyle != prev.appIconStyle
+            || s.showVisualizer != prev.showVisualizer
+            || s.showStatusBar != prev.showStatusBar;
         m_cfg = s;
-        applyTheme();
+        if (appearanceChanged) applyTheme();
         applyEqSettings();
         if (m_cfg.showTrackIcons != prev.showTrackIcons ||
             m_cfg.iconsFolder    != prev.iconsFolder) {
