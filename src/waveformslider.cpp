@@ -88,11 +88,6 @@ void WaveformSlider::clearWaveform() {
     m_decodeFinalized = false;
     m_samplesPerBin = 0;
     m_durationMs    = 0;
-    if (m_binsFilled >= m_bins) {
-        m_decoder->stop();
-        onDecodeFinished();
-        return;
-    }
     update();
 }
 
@@ -151,6 +146,14 @@ void WaveformSlider::onBufferReady() {
                 m_binCount = 0;
             }
         }
+    }
+
+    // Once all visual bins are ready there is no reason to decode the rest of
+    // the track. Finalize here while the decoder is known to exist.
+    if (m_bins > 0 && m_binsFilled >= m_bins) {
+        m_decoder->stop();
+        onDecodeFinished();
+        return;
     }
     update();
 

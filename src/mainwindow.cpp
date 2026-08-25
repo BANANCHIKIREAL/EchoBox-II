@@ -81,6 +81,7 @@
 #include <QDesktopServices>
 #include <QPushButton>
 #include <QStyle>
+#include <QPointer>
 #include <functional>
 #include <numeric>
 #include <algorithm>
@@ -546,10 +547,11 @@ void MainWindow::setupUi() {
     auto *loadingHeader = new QHBoxLayout;
     loadingHeader->setContentsMargins(0, 0, 0, 0);
     loadingHeader->setSpacing(9);
-    m_loadingIcon = new QLabel(QString::fromUtf8("↓"), m_loadingBanner);
+    m_loadingIcon = new QLabel(m_loadingBanner);
     m_loadingIcon->setObjectName("loadingIcon");
     m_loadingIcon->setAlignment(Qt::AlignCenter);
-    m_loadingIcon->setFixedSize(26, 26);
+    m_loadingIcon->setFixedSize(30, 30);
+    m_loadingIcon->setPixmap(Ico::download(QColor("#1e1e2e"), 17).pixmap(17, 17));
     m_loadingText = new QLabel(m_loadingBanner);
     m_loadingText->setObjectName("loadingText");
     m_loadingText->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -788,10 +790,11 @@ void MainWindow::setupUi() {
     auto *miniLoadingLayout = new QHBoxLayout(m_miniLoadingPanel);
     miniLoadingLayout->setContentsMargins(9, 5, 9, 5);
     miniLoadingLayout->setSpacing(7);
-    auto *miniLoadingIcon = new QLabel(QString::fromUtf8("↓"), m_miniLoadingPanel);
-    miniLoadingIcon->setObjectName("miniLoadingIcon");
-    miniLoadingIcon->setAlignment(Qt::AlignCenter);
-    miniLoadingIcon->setFixedWidth(14);
+    m_miniLoadingIcon = new QLabel(m_miniLoadingPanel);
+    m_miniLoadingIcon->setObjectName("miniLoadingIcon");
+    m_miniLoadingIcon->setAlignment(Qt::AlignCenter);
+    m_miniLoadingIcon->setFixedWidth(16);
+    m_miniLoadingIcon->setPixmap(Ico::download(tc, 14).pixmap(14, 14));
     m_miniLoadingBar = new QProgressBar(m_miniLoadingPanel);
     m_miniLoadingBar->setObjectName("miniLoadingBar");
     m_miniLoadingBar->setRange(0, 0);
@@ -801,7 +804,7 @@ void MainWindow::setupUi() {
     m_miniLoadingPercent->setObjectName("miniLoadingPercent");
     m_miniLoadingPercent->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     m_miniLoadingPercent->setFixedWidth(34);
-    miniLoadingLayout->addWidget(miniLoadingIcon);
+    miniLoadingLayout->addWidget(m_miniLoadingIcon);
     miniLoadingLayout->addWidget(m_miniLoadingBar);
     miniLoadingLayout->addWidget(m_miniLoadingPercent);
     m_miniLoadingPanel->setVisible(false);
@@ -1647,6 +1650,10 @@ void MainWindow::applyTheme() {
     if (m_playlistDownBtn) m_playlistDownBtn->setIcon(Ico::arrowDown(theme.subtext1, 15));
     if (m_playlistRemoveBtn) m_playlistRemoveBtn->setIcon(Ico::closeIcon(theme.subtext1, 15));
     if (m_playlistClearBtn) m_playlistClearBtn->setIcon(Ico::trash(theme.subtext1, 15));
+    if (m_loadingIcon)
+        m_loadingIcon->setPixmap(Ico::download(theme.base, 17).pixmap(17, 17));
+    if (m_miniLoadingIcon)
+        m_miniLoadingIcon->setPixmap(Ico::download(theme.accent, 14).pixmap(14, 14));
     setVolume(m_volumeSlider->value());
     updateRepeatButton();
 
@@ -3705,16 +3712,92 @@ void MainWindow::checkForUpdates(bool manual) {
             "a { color: %1; text-decoration: none; } "
             "p { margin: 3px 0 8px 0; } li { margin-bottom: 4px; }")
                 .arg(m_cfg.accentColor.name()));
+        const QRegularExpression fullChangelogPattern(
+            R"(\*\*Full Changelog\*\*:\s*(https?://\S+))",
+            QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch changelogMatch =
+            fullChangelogPattern.match(notes);
+        const QString changelogUrl = changelogMatch.hasMatch()
+            ? changelogMatch.captured(1)
+            : QString();
+        const QString changelogMarkdown = changelogUrl.isEmpty()
+            ? QString()
+            : QString("[Полный список изменений](%1)").arg(changelogUrl);
+
+        // GitHub generated notes may contain only a compare link. In that
+        // case obtain the actual commits and build a useful list instead of
+        // showing an almost empty box.
+        QString detailProbe = notes;
+        detailProbe.remove(fullChangelogPattern);
+        const bool needsCommitList = detailProbe.trimmed().isEmpty();
+
         QString notesMarkdown = notes.left(4000);
-        notesMarkdown.replace(
-            QRegularExpression(
-                R"(\*\*Full Changelog\*\*:\s*(https?://\S+))",
-                QRegularExpression::CaseInsensitiveOption),
-            QStringLiteral("[Полный список изменений](\\1)"));
-        notesView->setMarkdown(notesMarkdown.isEmpty()
-            ? QStringLiteral("Небольшие улучшения и исправления ошибок.")
-            : notesMarkdown);
+        notesMarkdown.replace(fullChangelogPattern, changelogMarkdown);
+        if (needsCommitList) {
+            notesMarkdown = QStringLiteral("Загружаем список изменений…");
+            if (!changelogMarkdown.isEmpty())
+                notesMarkdown += "\n\n" + changelogMarkdown;
+        } else if (notesMarkdown.trimmed().isEmpty()) {
+            notesMarkdown = QStringLiteral("Подробное описание релиза не опубликовано.");
+        }
+        notesView->setMarkdown(notesMarkdown);
         root->addWidget(notesView);
+
+        if (needsCommitList) {
+            const QString localTag = kAppVersion.startsWith('v', Qt::CaseInsensitive)
+                ? kAppVersion : "v" + kAppVersion;
+            const QString compareApi = QString(
+                "https://api.github.com/repos/BANANCHIKIREAL/EchoBox-II/compare/%1...%2")
+                .arg(QString::fromLatin1(QUrl::toPercentEncoding(localTag)),
+                     QString::fromLatin1(QUrl::toPercentEncoding(tag)));
+            QNetworkRequest compareRequest{QUrl(compareApi)};
+            compareRequest.setRawHeader("Accept", "application/vnd.github+json");
+            compareRequest.setRawHeader("User-Agent", "EchoBoxII-UpdateCheck");
+            QNetworkReply *compareReply = m_streamArtNam->get(compareRequest);
+            const QPointer<QTextBrowser> notesGuard(notesView);
+            connect(compareReply, &QNetworkReply::finished, this,
+                    [compareReply, notesGuard, tag, changelogMarkdown] {
+                compareReply->deleteLater();
+                if (!notesGuard) return;
+
+                QStringList changes;
+                if (compareReply->error() == QNetworkReply::NoError) {
+                    const QJsonArray commits = QJsonDocument::fromJson(
+                        compareReply->readAll()).object().value("commits").toArray();
+                    const int first = qMax(0, commits.size() - 16);
+                    for (int i = first; i < commits.size(); ++i) {
+                        const QString message = commits[i].toObject()
+                            .value("commit").toObject().value("message").toString();
+                        const QStringList lines = message.split('\n');
+                        QString subject = lines.value(0).trimmed();
+                        QString body = lines.mid(1).join(' ').simplified();
+                        if (subject.startsWith("Release EchoBox II", Qt::CaseInsensitive)
+                            && !body.isEmpty())
+                            subject = body;
+                        if (subject.isEmpty()) continue;
+                        if (subject.size() > 260) subject = subject.left(257) + "…";
+                        subject.replace('\\', "\\\\");
+                        subject.replace('*', "\\*");
+                        subject.replace('_', "\\_");
+                        subject.replace('[', "\\[");
+                        subject.replace(']', "\\]");
+                        changes.append("- " + subject);
+                    }
+                }
+
+                QString markdown;
+                if (changes.isEmpty()) {
+                    markdown = QStringLiteral(
+                        "Подробный список изменений получить не удалось.");
+                } else {
+                    markdown = QString("### Изменения в %1\n\n%2")
+                        .arg(tag.toHtmlEscaped(), changes.join('\n'));
+                }
+                if (!changelogMarkdown.isEmpty())
+                    markdown += "\n\n" + changelogMarkdown;
+                notesGuard->setMarkdown(markdown);
+            });
+        }
 
         if (!url.isEmpty()) {
             auto *releaseLink = new QLabel(
