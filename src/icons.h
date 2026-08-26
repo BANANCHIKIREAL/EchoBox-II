@@ -202,11 +202,16 @@ inline QIcon equalizer(QColor c, int size = 24) {
 
 inline QIcon music(QColor c, int size = 24) {
     QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
-    p.drawLine(QPointF(9, 18), QPointF(9, 5)); p.drawLine(QPointF(9, 5), QPointF(19, 3)); p.drawLine(QPointF(19, 3), QPointF(19, 16));
-    // Filled note heads must not also receive the outline pen: with a
-    // translucent color those two layers produced visible rings.
-    p.setPen(Qt::NoPen); p.setBrush(c);
-    p.drawEllipse(QPointF(6.5, 18), 2.5, 2); p.drawEllipse(QPointF(16.5, 16), 2.5, 2); return QIcon(pm);
+    // A straight, filled double note stays balanced when enlarged for the
+    // album placeholder. Using one fill also avoids translucent outline rings.
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.drawRoundedRect(QRectF(8.0, 4.5, 11.5, 3.0), 1.2, 1.2);
+    p.drawRoundedRect(QRectF(8.0, 5.5, 2.8, 12.5), 1.2, 1.2);
+    p.drawRoundedRect(QRectF(16.7, 5.5, 2.8, 10.5), 1.2, 1.2);
+    p.drawEllipse(QPointF(6.7, 18.0), 3.3, 2.4);
+    p.drawEllipse(QPointF(15.4, 16.0), 3.3, 2.4);
+    return QIcon(pm);
 }
 
 inline QIcon arrowUp(QColor c, int size = 24) {

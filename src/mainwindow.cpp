@@ -94,6 +94,9 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <objbase.h>
+#include <shobjidl.h>
+#include <shellapi.h>
 #include "../apo/ring.h"
 
 // ─── Static data ─────────────────────────────────────────────────────────────
@@ -126,6 +129,30 @@ static void setLaunchOnStartup(bool enabled) {
     } else {
         runKey.remove(kAutostartRegKey);
     }
+}
+
+static bool setWindowsShortcutIcon(const QString &shortcutPath,
+                                   const QString &iconPath) {
+    IShellLinkW *shellLink = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                  IID_IShellLinkW,
+                                  reinterpret_cast<void **>(&shellLink));
+    if (FAILED(hr) || !shellLink) return false;
+
+    IPersistFile *persist = nullptr;
+    hr = shellLink->QueryInterface(IID_IPersistFile,
+                                   reinterpret_cast<void **>(&persist));
+    if (SUCCEEDED(hr) && persist) {
+        hr = persist->Load(reinterpret_cast<LPCWSTR>(shortcutPath.utf16()), STGM_READWRITE);
+        if (SUCCEEDED(hr))
+            hr = shellLink->SetIconLocation(
+                reinterpret_cast<LPCWSTR>(iconPath.utf16()), 0);
+        if (SUCCEEDED(hr))
+            hr = persist->Save(reinterpret_cast<LPCWSTR>(shortcutPath.utf16()), TRUE);
+        persist->Release();
+    }
+    shellLink->Release();
+    return SUCCEEDED(hr);
 }
 
 const QStringList MainWindow::VIDEO_EXTS = {"mp4","mkv","avi","mov","webm","flv","wmv","m2ts"};
@@ -311,7 +338,6 @@ MainWindow::MainWindow(QWidget *parent)
         m_eqPending = false;
         m_eqActive = true;
         applyVolume();
-        setEqStatus("active", "Эквалайзер включён и применяется к текущему треку");
         statusBar()->showMessage("Эквалайзер включён", 2500);
     });
     connect(m_eqEngine, &AudioEngine::decodeError, this, [this](const QString &msg){
@@ -320,7 +346,6 @@ MainWindow::MainWindow(QWidget *parent)
         m_eqActive = false;
         m_eqSource = QUrl();
         applyVolume();
-        setEqStatus("error", "Эквалайзер не удалось применить к текущему треку");
         showCopyableError("Эквалайзер недоступен для этого трека",
             "Не удалось декодировать трек для эквалайзера — играет обычный "
             "плеер без него.\n\n" + msg);
@@ -380,6 +405,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     const QIcon icon(createLogo(128, ThemeManager::palette("mocha"), m_cfg.appIconStyle));
     setWindowIcon(icon);
+    syncShellShortcutIcon();
 
     // Тихая фоновая проверка обновлений (не мешает старту, не спамит окнами)
     QTimer::singleShot(3000, this, [this]{ if (m_cfg.autoCheckUpdates) checkForUpdates(false); });
@@ -657,14 +683,6 @@ void MainWindow::setupUi() {
     m_speedCombo->setToolTip("Скорость воспроизведения");
     m_speedCombo->setFixedWidth(68);
 
-    m_eqStatusLabel = new QLabel("EQ", this);
-    m_eqStatusLabel->setObjectName("eqStatus");
-    m_eqStatusLabel->setProperty("state", "off");
-    m_eqStatusLabel->setAlignment(Qt::AlignCenter);
-    m_eqStatusLabel->setFixedSize(38, 24);
-    m_eqStatusLabel->setToolTip("Эквалайзер выключен");
-
-
     // Музыка → микрофон (через EchoBox APO, установи apo\install.bat)
     m_micBtn = mkBtn("ЛКМ — музыка в микрофон вкл/выкл\nПКМ — громкость и «только музыка»", "toggleBtn", 30);
     m_micBtn->setCheckable(true);
@@ -683,7 +701,6 @@ void MainWindow::setupUi() {
     c2->addWidget(m_volumeLabel);
     c2->addSpacing(16);
     c2->addWidget(m_speedCombo);
-    c2->addWidget(m_eqStatusLabel);
     c2->addSpacing(12);
     c2->addWidget(m_micBtn);
     c2->addStretch();
@@ -849,16 +866,15 @@ void MainWindow::setupUi() {
     // ══ PLAYLIST PANEL ═══════════════════════════════════════════════════════
     m_playlistPanel = new QWidget(this);
     QVBoxLayout *plL = new QVBoxLayout(m_playlistPanel);
-    plL->setContentsMargins(12, 4, 12, 10);
+    plL->setContentsMargins(12, 0, 12, 10);
     plL->setSpacing(4);
 
     // ── Tabs row ─────────────────────────────────────────────────────────────
     {
         QHBoxLayout *tabRow = new QHBoxLayout;
         tabRow->setSpacing(4);
-        // Leave a small gap below the tabs so their border does not visually
-        // collide with the playlist panel separator.
-        tabRow->setContentsMargins(0, 0, 0, 4);
+        // Keep the tab visibly above the rest of the playlist controls.
+        tabRow->setContentsMargins(0, 0, 0, 6);
 
         m_tabBar = new QTabBar(this);
         m_tabBar->setObjectName("playlistTabBar");
@@ -872,8 +888,8 @@ void MainWindow::setupUi() {
         newPlBtn->setFixedSize(26, 26);
         newPlBtn->setToolTip("Новый плейлист");
 
-        tabRow->addWidget(m_tabBar, 1);
-        tabRow->addWidget(newPlBtn);
+        tabRow->addWidget(m_tabBar, 1, Qt::AlignTop);
+        tabRow->addWidget(newPlBtn, 0, Qt::AlignTop);
         plL->addLayout(tabRow);
 
         connect(newPlBtn, &QToolButton::clicked, this, &MainWindow::newPlaylist);
@@ -1131,29 +1147,6 @@ void MainWindow::applyTheme() {
         QLabel#albumLabel  { color: #6c7086; font-size: 11px; font-style: italic; }
         QLabel#timeLabel   { color: #a6adc8; font-size: 12px; font-variant-numeric: tabular-nums; }
         QLabel#volLabel    { color: #a6adc8; font-size: 12px; }
-        QLabel#eqStatus {
-            color: #6c7086;
-            background-color: #252537;
-            border: 1px solid #313244;
-            border-radius: 7px;
-            font-size: 11px;
-            font-weight: bold;
-        }
-        QLabel#eqStatus[state="pending"] {
-            color: #fab387;
-            border-color: #fab387;
-            background-color: #313244;
-        }
-        QLabel#eqStatus[state="active"] {
-            color: #181825;
-            border-color: ACCENT;
-            background-color: ACCENT;
-        }
-        QLabel#eqStatus[state="error"] {
-            color: #f38ba8;
-            border-color: #f38ba8;
-            background-color: #45283a;
-        }
         QLabel#playlistInfo{ color: #6c7086; font-size: 11px; padding: 0 6px; }
         QLabel#miniTitle   { color: #cdd6f4; font-size: 13px; font-weight: bold; padding: 0 6px; }
 
@@ -1425,10 +1418,9 @@ void MainWindow::applyTheme() {
         QTabBar#playlistTabBar::tab {
             background-color: #252537;
             color: #6c7086;
-            padding: 5px 18px;
-            border-radius: 6px 6px 0 0;
+            padding: 4px 18px;
+            border-radius: 7px;
             border: 1px solid #313244;
-            border-bottom: none;
             margin-right: 2px;
             font-size: 12px;
         }
@@ -1472,6 +1464,30 @@ void MainWindow::applyTheme() {
         }
         QListWidget#settingsSidebar::item:selected {
             background-color: #313244;
+            color: ACCENT;
+            font-weight: bold;
+        }
+
+        QListWidget#appIconGrid {
+            background-color: #181825;
+            border: 1px solid #313244;
+            border-radius: 10px;
+            outline: none;
+            padding: 5px;
+        }
+        QListWidget#appIconGrid::item {
+            color: #a6adc8;
+            border: 2px solid transparent;
+            border-radius: 10px;
+            padding: 3px;
+        }
+        QListWidget#appIconGrid::item:hover:!selected {
+            background-color: #24243a;
+            color: #cdd6f4;
+        }
+        QListWidget#appIconGrid::item:selected {
+            background-color: #313244;
+            border-color: ACCENT;
             color: ACCENT;
             font-weight: bold;
         }
@@ -1678,6 +1694,58 @@ void MainWindow::applyTheme() {
         m_miniWaveform->setTrackColor(theme.surface2);
         m_miniWaveform->setBackgroundColor(theme.base);
     }
+}
+
+void MainWindow::syncShellShortcutIcon() {
+    const QString iconRoot = QStandardPaths::writableLocation(
+        QStandardPaths::AppDataLocation) + "/app-icons";
+    if (!QDir().mkpath(iconRoot)) return;
+
+    QString styleName = m_cfg.appIconStyle.toLower();
+    styleName.remove(QRegularExpression("[^a-z0-9_-]"));
+    if (styleName.isEmpty()) styleName = "classic";
+    const QString iconPath = iconRoot + "/EchoBoxII-" + styleName + ".ico";
+    const QPixmap iconPixmap = createLogo(
+        256, ThemeManager::palette("mocha"), styleName);
+    if (!iconPixmap.save(iconPath, "ICO")) return;
+
+    QStringList roots = {
+        QStandardPaths::writableLocation(QStandardPaths::DesktopLocation),
+        QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation),
+        qEnvironmentVariable("PUBLIC") + "/Desktop",
+        qEnvironmentVariable("APPDATA")
+            + "/Microsoft/Internet Explorer/Quick Launch/User Pinned/TaskBar"
+    };
+
+    QSet<QString> shortcuts;
+    for (const QString &root : roots) {
+        if (root.isEmpty() || !QDir(root).exists()) continue;
+        QDirIterator it(root, {"*.lnk"}, QDir::Files,
+                        QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString path = it.next();
+            if (QFileInfo(path).completeBaseName().contains(
+                    "EchoBox", Qt::CaseInsensitive))
+                shortcuts.insert(QDir::toNativeSeparators(path));
+        }
+    }
+    if (shortcuts.isEmpty()) return;
+
+    const HRESULT initResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool shouldUninitialize = SUCCEEDED(initResult);
+    if (FAILED(initResult) && initResult != RPC_E_CHANGED_MODE) return;
+
+    for (const QString &shortcut : shortcuts) {
+        if (setWindowsShortcutIcon(shortcut,
+                                   QDir::toNativeSeparators(iconPath))) {
+            SHChangeNotify(SHCNE_UPDATEITEM,
+                           SHCNF_PATHW | SHCNF_FLUSHNOWAIT,
+                           reinterpret_cast<LPCWSTR>(shortcut.utf16()), nullptr);
+        }
+    }
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST | SHCNF_FLUSHNOWAIT,
+                   nullptr, nullptr);
+    if (shouldUninitialize) CoUninitialize();
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────
@@ -2708,6 +2776,15 @@ void MainWindow::togglePlayPause() {
     } else if (m_player->playbackState() == QMediaPlayer::PausedState) {
         m_player->play();
         if (m_eqActive) m_eqEngine->play();
+    } else if (m_currentIndex >= 0 && m_currentIndex < m_playlist.size()
+               && !m_player->source().isEmpty()) {
+        // Stop keeps the current media loaded. Reuse it instead of calling
+        // playTrack(), which clears the already prepared waveform. Qt does not
+        // guarantee another durationChanged signal for the same source, so the
+        // cleared waveform could otherwise remain empty.
+        playerSeek(0);
+        m_player->play();
+        syncEqEngineToCurrentTrack();
     } else if (!m_playlist.isEmpty()) {
         playTrack(qMax(m_currentIndex, 0));
     }
@@ -4266,17 +4343,6 @@ void MainWindow::playerSeek(qint64 ms) {
     if (m_eqActive) m_eqEngine->setPosition(ms);
 }
 
-void MainWindow::setEqStatus(const QString &state, const QString &toolTip) {
-    if (!m_eqStatusLabel) return;
-    m_eqStatusLabel->setProperty("state", state);
-    m_eqStatusLabel->setText(state == "pending" ? "EQ…"
-                             : state == "error" ? "EQ!" : "EQ");
-    m_eqStatusLabel->setToolTip(toolTip);
-    m_eqStatusLabel->style()->unpolish(m_eqStatusLabel);
-    m_eqStatusLabel->style()->polish(m_eqStatusLabel);
-    m_eqStatusLabel->update();
-}
-
 void MainWindow::stopEqEngine() {
     m_eqPending = false;
     m_eqActive = false;
@@ -4293,15 +4359,9 @@ void MainWindow::syncEqEngineToCurrentTrack() {
         const bool wasRunning = m_eqActive || m_eqPending;
         if (m_eqActive || m_eqPending) stopEqEngine();
         if (m_cfg.eqEnabled && !src.isEmpty()) {
-            setEqStatus("error", isVideoFile(src)
-                ? "Эквалайзер не применяется к видео"
-                : "Эквалайзер применяется только к локальному аудио");
             if (wasRunning)
                 statusBar()->showMessage("Эквалайзер недоступен для этого трека", 3500);
         } else {
-            setEqStatus("off", m_cfg.eqEnabled
-                ? "Эквалайзер включён в настройках — выберите локальный аудиотрек"
-                : "Эквалайзер выключен");
             if (wasRunning && !m_cfg.eqEnabled)
                 statusBar()->showMessage("Эквалайзер выключен", 2000);
         }
@@ -4309,19 +4369,13 @@ void MainWindow::syncEqEngineToCurrentTrack() {
     }
 
     // При повторном применении настроек не запускаем декодирование заново.
-    if (m_eqSource == src && (m_eqActive || m_eqPending)) {
-        setEqStatus(m_eqActive ? "active" : "pending",
-                    m_eqActive ? "Эквалайзер включён и применяется к текущему треку"
-                               : "Эквалайзер подготавливает текущий трек");
-        return;
-    }
+    if (m_eqSource == src && (m_eqActive || m_eqPending)) return;
 
     // Пока новый трек декодируется, обычный QMediaPlayer остаётся слышимым.
     // Это исключает тишину на неподдерживаемых/повреждённых файлах.
     stopEqEngine();
     m_eqSource = src;
     m_eqPending = true;
-    setEqStatus("pending", "Эквалайзер подготавливает текущий трек");
     statusBar()->showMessage("Эквалайзер включается — подготовка аудио…");
     m_eqEngine->setSource(src);
 }
@@ -4594,6 +4648,7 @@ void MainWindow::openSettings() {
     SettingsDialog dlg(m_cfg, this);
     connect(&dlg, &SettingsDialog::applied, this, [this, applyEqSettings](const AppSettings &s) {
         const AppSettings prev = m_cfg;
+        const bool appIconChanged = s.appIconStyle != prev.appIconStyle;
         const bool appearanceChanged = s.theme != prev.theme
             || s.accentColor != prev.accentColor
             || s.fontSizeIdx != prev.fontSizeIdx
@@ -4605,6 +4660,7 @@ void MainWindow::openSettings() {
             || s.showStatusBar != prev.showStatusBar;
         m_cfg = s;
         if (appearanceChanged) applyTheme();
+        if (appIconChanged) syncShellShortcutIcon();
         applyEqSettings();
         if (m_cfg.showTrackIcons != prev.showTrackIcons ||
             m_cfg.iconsFolder    != prev.iconsFolder) {
@@ -4623,11 +4679,12 @@ void MainWindow::openSettings() {
             m_playlistWidget->viewport()->update();
     };
 
-    const AppSettings liveApplied = m_cfg; // state after live-apply (may differ from savedCfg)
     if (dlg.exec() == QDialog::Accepted) {
         const AppSettings prev = m_cfg;
         m_cfg = dlg.result();
         applyTheme();
+        if (m_cfg.appIconStyle != prev.appIconStyle)
+            syncShellShortcutIcon();
         applyEqSettings();
         applyIconsIfNeeded(prev);
         if (!m_cfg.discordEnabled && m_discord) m_discord->clearActivity();
@@ -4640,9 +4697,11 @@ void MainWindow::openSettings() {
     } else {
         // Cancel — revert to state before dialog opened (в т.ч. превью
         // эквалайзера, которое могло применяться вживую во время диалога)
-        const AppSettings prev = liveApplied;
+        const AppSettings prev = m_cfg;
         m_cfg = savedCfg;
         applyTheme();
+        if (m_cfg.appIconStyle != prev.appIconStyle)
+            syncShellShortcutIcon();
         applyEqSettings();
         applyIconsIfNeeded(prev);
     }

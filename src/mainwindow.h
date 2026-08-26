@@ -160,6 +160,7 @@ private:
     void setupTray();
     void setupConnections();
     void applyTheme();
+    void syncShellShortcutIcon();
     void loadSettings();
     void saveSettings();
 
@@ -258,7 +259,6 @@ private:
     QUrl         m_eqSource;
     void syncEqEngineToCurrentTrack();
     void stopEqEngine();
-    void setEqStatus(const QString &state, const QString &toolTip);
     void playerSeek(qint64 ms);
 
     // ── State ────────────────────────────────────────────────────────────────
@@ -325,7 +325,6 @@ private:
     QToolButton *m_muteBtn      = nullptr;
     QSlider     *m_volumeSlider = nullptr;
     QLabel      *m_volumeLabel  = nullptr;
-    QLabel      *m_eqStatusLabel = nullptr;
 
     // ── Mini player ──────────────────────────────────────────────────────────
     QWidget     *m_miniBar        = nullptr;
