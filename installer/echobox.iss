@@ -1,6 +1,6 @@
 #define MyAppName "EchoBox II"
 #ifndef MyAppVersion
-  #define MyAppVersion "3.2.0"
+  #define MyAppVersion "3.2.1"
 #endif
 #define MyAppPublisher "BANANCHIKIREAL"
 #define MyAppURL "https://github.com/BANANCHIKIREAL/EchoBox-II"
@@ -48,3 +48,6 @@ Name: "{autodesktop}\EchoBox II"; Filename: "{app}\{#MyAppExeName}"; WorkingDir:
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,EchoBox II}"; Flags: nowait postinstall skipifsilent
+; Тихая установка запускается только безопасным встроенным updater-ом после
+; проверки SHA-256. После обновления возвращаем приложение без PowerShell.
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait skipifnotsilent

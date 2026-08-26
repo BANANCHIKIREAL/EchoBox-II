@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(EchoBoxII VERSION 3.2.0 LANGUAGES CXX)
+project(EchoBoxII VERSION 3.2.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -57,6 +57,17 @@ qt_add_executable(EchoBoxII
     assets/app_icons.qrc
     ${APP_ICON_SOURCES}
 )
+
+if(WIN32)
+    add_executable(EchoBoxUpdater WIN32 src/updater_main.cpp)
+    target_compile_features(EchoBoxUpdater PRIVATE cxx_std_17)
+    target_link_libraries(EchoBoxUpdater PRIVATE shell32)
+    if(MINGW)
+        # The helper is copied to TEMP and must start without Qt/MinGW DLLs.
+        target_link_options(EchoBoxUpdater PRIVATE
+            -static -static-libgcc -static-libstdc++)
+    endif()
+endif()
 
 target_link_libraries(EchoBoxII PRIVATE
     Qt6::Core

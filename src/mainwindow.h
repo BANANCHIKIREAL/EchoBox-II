@@ -144,7 +144,10 @@ private slots:
     // Other
     void showAbout();
     void checkForUpdates(bool manual);
-    void downloadAndInstallUpdate(const QString &assetUrl, const QString &tag);
+    void downloadAndInstallUpdate(const QString &assetUrl, const QString &tag,
+                                  const QString &assetName,
+                                  const QString &expectedDigest,
+                                  qint64 expectedSize);
     void openRecentFile(const QString &path);
     void openSettings();
     // Library scanner
