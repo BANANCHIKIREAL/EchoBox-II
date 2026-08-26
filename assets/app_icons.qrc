@@ -1,0 +1,12 @@
+<RCC>
+    <qresource prefix="/app-icons">
+        <file alias="cosmic.png">app_icons/cosmic.png</file>
+        <file alias="aurora.png">app_icons/aurora.png</file>
+        <file alias="sunset.png">app_icons/sunset.png</file>
+        <file alias="ocean.png">app_icons/ocean.png</file>
+        <file alias="mono.png">app_icons/mono.png</file>
+        <file alias="ruby.png">app_icons/ruby.png</file>
+        <file alias="cloud.png">app_icons/cloud.png</file>
+        <file alias="ember.png">app_icons/ember.png</file>
+    </qresource>
+</RCC>

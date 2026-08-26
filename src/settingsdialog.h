@@ -9,6 +9,7 @@ class QCheckBox;
 class QComboBox;
 class QFontComboBox;
 class QLineEdit;
+class QListWidget;
 class QStackedWidget;
 class QShowEvent;
 
@@ -108,7 +109,7 @@ private:
     QButtonGroup  *m_fontGroup       = nullptr;
     QFontComboBox *m_fontFamilyCombo = nullptr;
     QComboBox     *m_artShapeCombo   = nullptr;
-    QComboBox     *m_appIconCombo    = nullptr;
+    QListWidget   *m_appIconList     = nullptr;
 
     QCheckBox *m_autoPlayChk    = nullptr;
     QCheckBox *m_vizChk         = nullptr;

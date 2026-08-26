@@ -1,9 +1,12 @@
 #pragma once
 #include <QPixmap>
 #include <QPainter>
+#include <QPainterPath>
 #include <QLinearGradient>
 #include <QRadialGradient>
 #include <QFont>
+#include <QHash>
+#include <QPixmapCache>
 #include <QRectF>
 #include <cmath>
 #include "thememanager.h"
@@ -12,6 +15,43 @@ inline QPixmap createLogo(int size, const ThemePalette &baseTheme,
                           const QString &style = "classic") {
     ThemePalette theme = baseTheme;
     const QString iconStyle = style.toLower();
+    const QString cacheKey = QString("echobox-app-icon:%1:%2")
+                                 .arg(iconStyle).arg(size);
+    QPixmap cached;
+    if (QPixmapCache::find(cacheKey, &cached)) return cached;
+
+    static const QHash<QString, QString> illustratedIcons = {
+        {"cosmic", ":/app-icons/cosmic.png"},
+        {"aurora", ":/app-icons/aurora.png"},
+        {"sunset", ":/app-icons/sunset.png"},
+        {"ocean", ":/app-icons/ocean.png"},
+        {"mono", ":/app-icons/mono.png"},
+        {"ruby", ":/app-icons/ruby.png"},
+        {"cloud", ":/app-icons/cloud.png"},
+        {"ember", ":/app-icons/ember.png"},
+    };
+    const auto illustratedIt = illustratedIcons.constFind(iconStyle);
+    if (illustratedIt != illustratedIcons.cend()) {
+        const QPixmap source(illustratedIt.value());
+        if (!source.isNull()) {
+            const QPixmap scaled = source.scaled(
+                size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            QPixmap result(size, size);
+            result.fill(Qt::transparent);
+            QPainter iconPainter(&result);
+            iconPainter.setRenderHint(QPainter::Antialiasing);
+            iconPainter.setRenderHint(QPainter::SmoothPixmapTransform);
+            QPainterPath roundedMask;
+            roundedMask.addRoundedRect(QRectF(0, 0, size, size),
+                                       size * 0.17, size * 0.17);
+            iconPainter.setClipPath(roundedMask);
+            iconPainter.drawPixmap(0, 0, scaled);
+            iconPainter.end();
+            QPixmapCache::insert(cacheKey, result);
+            return result;
+        }
+    }
+
     const bool roundedTile = iconStyle == "cosmic" || iconStyle == "aurora"
         || iconStyle == "sunset" || iconStyle == "ocean"
         || iconStyle == "mono" || iconStyle == "ruby";
@@ -132,5 +172,6 @@ inline QPixmap createLogo(int size, const ThemePalette &baseTheme,
                    Qt::AlignHCenter | Qt::AlignVCenter, "II");
     }
 
+    QPixmapCache::insert(cacheKey, pm);
     return pm;
 }

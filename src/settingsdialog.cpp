@@ -262,31 +262,46 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
         liveApply();
     });
 
-    auto *appIconRow = new QHBoxLayout;
-    appIconRow->setSpacing(10);
-    auto *appIconLabel = new QLabel("Значок приложения:", tab);
-    m_appIconCombo = new QComboBox(tab);
-    m_appIconCombo->setIconSize({40, 40});
-    m_appIconCombo->setMinimumHeight(46);
-    m_appIconCombo->setMinimumWidth(245);
-    m_appIconCombo->setToolTip("Меняет значок окон и системного трея; от темы интерфейса не зависит");
+    l->addWidget(makeHead("Значок приложения",
+        "Меняет значок окон, системного трея и ярлыков EchoBox.\n"
+        "От темы интерфейса не зависит."));
+    m_appIconList = new QListWidget(tab);
+    m_appIconList->setObjectName("appIconGrid");
+    m_appIconList->setViewMode(QListView::IconMode);
+    m_appIconList->setFlow(QListView::LeftToRight);
+    m_appIconList->setMovement(QListView::Static);
+    m_appIconList->setResizeMode(QListView::Adjust);
+    m_appIconList->setWrapping(true);
+    m_appIconList->setUniformItemSizes(true);
+    m_appIconList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_appIconList->setIconSize({56, 56});
+    m_appIconList->setGridSize({72, 82});
+    m_appIconList->setFixedHeight(186);
+    m_appIconList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_appIconList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_appIconList->setToolTip("Выбери значок — изменение сразу появится в приложении");
     const ThemePalette logoBase = ThemeManager::palette("mocha");
     const struct { const char *id; const char *name; } appIcons[] = {
-        {"classic", "Classic Pulse"}, {"cosmic", "Cosmic Bloom"},
-        {"aurora", "Aurora Wave"}, {"sunset", "Sunset Pop"},
-        {"ocean", "Deep Ocean"}, {"mono", "Midnight Mono"},
-        {"ruby", "Ruby Beat"},
+        {"classic", "Classic"}, {"cosmic", "Cosmic"},
+        {"aurora", "Aurora"}, {"sunset", "Sunset"},
+        {"ocean", "Ocean"}, {"mono", "Obsidian"},
+        {"ruby", "Ruby"}, {"cloud", "Cloud"},
+        {"ember", "Ember"},
     };
-    for (const auto &entry : appIcons)
-        m_appIconCombo->addItem(QIcon(createLogo(40, logoBase, entry.id)),
-                                entry.name, entry.id);
-    const int appIconIndex = m_appIconCombo->findData(m_result.appIconStyle);
-    m_appIconCombo->setCurrentIndex(appIconIndex >= 0 ? appIconIndex : 0);
-    appIconRow->addWidget(appIconLabel);
-    appIconRow->addWidget(m_appIconCombo);
-    appIconRow->addStretch();
-    l->addLayout(appIconRow);
-    m_liveWidgets << m_appIconCombo;
+    int selectedIconRow = 0;
+    for (const auto &entry : appIcons) {
+        auto *item = new QListWidgetItem(
+            QIcon(createLogo(112, logoBase, entry.id)), entry.name);
+        item->setData(Qt::UserRole, entry.id);
+        item->setTextAlignment(Qt::AlignHCenter | Qt::AlignBottom);
+        item->setToolTip(entry.name);
+        m_appIconList->addItem(item);
+        if (m_result.appIconStyle == entry.id)
+            selectedIconRow = m_appIconList->count() - 1;
+    }
+    m_appIconList->setCurrentRow(selectedIconRow);
+    l->addWidget(m_appIconList);
+    m_liveWidgets << m_appIconList;
 
     l->addWidget(makeSep());
 
@@ -802,6 +817,9 @@ void SettingsDialog::connectLive() {
         else if (auto *combo = qobject_cast<QComboBox*>(obj))
             connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                     this, &SettingsDialog::liveApply);
+        else if (auto *list = qobject_cast<QListWidget*>(obj))
+            connect(list, &QListWidget::currentRowChanged,
+                    this, &SettingsDialog::liveApply);
     }
     // Font group
     connect(m_fontGroup, QOverload<int,bool>::of(&QButtonGroup::idToggled),
@@ -913,7 +931,9 @@ void SettingsDialog::browseFolder(QLineEdit *edit) {
 
 void SettingsDialog::collectResult() {
     m_result.theme       = m_themeCombo ? m_themeCombo->currentData().toString() : "mocha";
-    m_result.appIconStyle = m_appIconCombo ? m_appIconCombo->currentData().toString() : "classic";
+    m_result.appIconStyle = m_appIconList && m_appIconList->currentItem()
+        ? m_appIconList->currentItem()->data(Qt::UserRole).toString()
+        : "classic";
     m_result.fontSizeIdx = m_fontGroup->checkedId();
     m_result.fontFamily  = m_fontFamilyCombo->currentFont().family();
     // fontFilePath already updated directly in the browse/reset handlers

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(EchoBoxII VERSION 3.0.1 LANGUAGES CXX)
+project(EchoBoxII VERSION 3.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -54,6 +54,7 @@ qt_add_executable(EchoBoxII
     src/libraryscanner.cpp
     src/audioengine.h
     src/audioengine.cpp
+    assets/app_icons.qrc
     ${APP_ICON_SOURCES}
 )
 
@@ -65,6 +66,10 @@ target_link_libraries(EchoBoxII PRIVATE
     Qt6::MultimediaWidgets
     Qt6::Network
 )
+
+if(WIN32)
+    target_link_libraries(EchoBoxII PRIVATE ole32 shell32 uuid)
+endif()
 
 target_compile_definitions(EchoBoxII PRIVATE
     ECHOBOX_VERSION="${PROJECT_VERSION}"
