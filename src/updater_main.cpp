@@ -35,7 +35,7 @@ static bool copyTree(const fs::path &source, const fs::path &target) {
     return !ec;
 }
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     int argc = 0;
     LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv || argc != 5) {
