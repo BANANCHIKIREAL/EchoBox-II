@@ -329,7 +329,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_eqEngine, &AudioEngine::ready, this, [this]{
         const QUrl current = m_player->source();
         const bool stillWanted = m_eqPending && m_cfg.eqEnabled &&
-            current == m_eqSource && current.isLocalFile() && !isVideoFile(current);
+            current == m_eqSource && current.isLocalFile();
         if (!stillWanted) return;
 
         m_eqEngine->setPosition(m_player->position());
@@ -424,11 +424,11 @@ void MainWindow::setupMenuBar() {
     fm->addAction("&Открыть файлы...", QKeySequence(Qt::CTRL | Qt::Key_O),
                   this, &MainWindow::openFiles);
     fm->addAction("Открыть &папку...", this, &MainWindow::openFolder);
-    QAction *openUrlAction = fm->addAction("Открыть по &ссылке...", this, &MainWindow::openUrlDialog);
-    openUrlAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_U));
-    openUrlAction->setIcon(Ico::link(QColor(0xba, 0xc2, 0xde), 18));
-    QAction *scanAction = fm->addAction("Сканировать библиотеку", this, &MainWindow::scanLibrary);
-    scanAction->setIcon(Ico::folder(QColor(0xba, 0xc2, 0xde), 18));
+    m_openUrlAct = fm->addAction("Открыть по &ссылке...", this, &MainWindow::openUrlDialog);
+    m_openUrlAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_U));
+    m_openUrlAct->setIcon(Ico::link(QColor(0xba, 0xc2, 0xde), 18));
+    m_scanLibraryAct = fm->addAction("Сканировать библиотеку", this, &MainWindow::scanLibrary);
+    m_scanLibraryAct->setIcon(Ico::folder(QColor(0xba, 0xc2, 0xde), 18));
     m_recentMenu = fm->addMenu("&Недавние файлы");
     fm->addSeparator();
     fm->addAction("&Сохранить плейлист...", QKeySequence(Qt::CTRL | Qt::Key_S),
@@ -738,14 +738,14 @@ void MainWindow::setupUi() {
     m_miniAlbumArt->setScaledContents(true);
 
     // Transport
-    auto *miniPrev = new QToolButton(this); miniPrev->setObjectName("ctrlBtn"); miniPrev->setFixedSize(28,28);
-    miniPrev->setIcon(Ico::prev(mc,16)); miniPrev->setIconSize({16,16});
+    m_miniPrevBtn = new QToolButton(this); m_miniPrevBtn->setObjectName("ctrlBtn"); m_miniPrevBtn->setFixedSize(28,28);
+    m_miniPrevBtn->setIcon(Ico::prev(mc,16)); m_miniPrevBtn->setIconSize({16,16});
 
     m_miniPlayBtn = new QToolButton(this); m_miniPlayBtn->setObjectName("playBtn"); m_miniPlayBtn->setFixedSize(36,36);
     m_miniPlayBtn->setIcon(Ico::play(pc,22)); m_miniPlayBtn->setIconSize({22,22});
 
-    auto *miniNext = new QToolButton(this); miniNext->setObjectName("ctrlBtn"); miniNext->setFixedSize(28,28);
-    miniNext->setIcon(Ico::next(mc,16)); miniNext->setIconSize({16,16});
+    m_miniNextBtn = new QToolButton(this); m_miniNextBtn->setObjectName("ctrlBtn"); m_miniNextBtn->setFixedSize(28,28);
+    m_miniNextBtn->setIcon(Ico::next(mc,16)); m_miniNextBtn->setIconSize({16,16});
 
     // Title
     m_miniTitle = new QLabel("EchoBox II", this);
@@ -772,21 +772,21 @@ void MainWindow::setupUi() {
     m_miniVolSlider->setFixedWidth(80);
 
     // Expand
-    auto *miniExpand = new QToolButton(this);
-    miniExpand->setObjectName("ctrlBtn"); miniExpand->setFixedSize(26,26);
-    miniExpand->setIcon(Ico::expand(mc, 13)); miniExpand->setIconSize({13,13});
-    miniExpand->setToolTip("Полный режим  F11");
+    m_miniExpandBtn = new QToolButton(this);
+    m_miniExpandBtn->setObjectName("ctrlBtn"); m_miniExpandBtn->setFixedSize(26,26);
+    m_miniExpandBtn->setIcon(Ico::expand(mc, 13)); m_miniExpandBtn->setIconSize({13,13});
+    m_miniExpandBtn->setToolTip("Полный режим  F11");
 
     // Свернуть / закрыть — без системной рамки в мини-режиме своих кнопок нет
-    auto *miniMinimize = new QToolButton(this);
-    miniMinimize->setObjectName("ctrlBtn"); miniMinimize->setFixedSize(26,26);
-    miniMinimize->setIcon(Ico::minimize(mc, 13)); miniMinimize->setIconSize({13,13});
-    miniMinimize->setToolTip("Свернуть");
+    m_miniMinimizeBtn = new QToolButton(this);
+    m_miniMinimizeBtn->setObjectName("ctrlBtn"); m_miniMinimizeBtn->setFixedSize(26,26);
+    m_miniMinimizeBtn->setIcon(Ico::minimize(mc, 13)); m_miniMinimizeBtn->setIconSize({13,13});
+    m_miniMinimizeBtn->setToolTip("Свернуть");
 
-    auto *miniClose = new QToolButton(this);
-    miniClose->setObjectName("ctrlBtn"); miniClose->setFixedSize(26,26);
-    miniClose->setIcon(Ico::closeIcon(mc, 12)); miniClose->setIconSize({12,12});
-    miniClose->setToolTip("Закрыть");
+    m_miniCloseBtn = new QToolButton(this);
+    m_miniCloseBtn->setObjectName("ctrlBtn"); m_miniCloseBtn->setFixedSize(26,26);
+    m_miniCloseBtn->setIcon(Ico::closeIcon(mc, 12)); m_miniCloseBtn->setIconSize({12,12});
+    m_miniCloseBtn->setToolTip("Закрыть");
 
     // На всю ширину экрана, прижать к верху
     m_miniDockBtn = new QToolButton(this);
@@ -829,9 +829,9 @@ void MainWindow::setupUi() {
 
     miniL->addWidget(m_miniAlbumArt);
     miniL->addSpacing(2);
-    miniL->addWidget(miniPrev);
+    miniL->addWidget(m_miniPrevBtn);
     miniL->addWidget(m_miniPlayBtn);
-    miniL->addWidget(miniNext);
+    miniL->addWidget(m_miniNextBtn);
     miniL->addWidget(m_miniTitle);
     miniL->addWidget(m_miniLoadingPanel);
     miniL->addWidget(m_miniWaveform, 1);
@@ -842,16 +842,16 @@ void MainWindow::setupUi() {
     miniL->addWidget(m_miniVolSlider);
     miniL->addSpacing(2);
     miniL->addWidget(m_miniDockBtn);
-    miniL->addWidget(miniExpand);
-    miniL->addWidget(miniMinimize);
-    miniL->addWidget(miniClose);
+    miniL->addWidget(m_miniExpandBtn);
+    miniL->addWidget(m_miniMinimizeBtn);
+    miniL->addWidget(m_miniCloseBtn);
     root->addWidget(m_miniBar);
 
-    connect(miniPrev,         &QToolButton::clicked, this, &MainWindow::previous);
-    connect(miniNext,         &QToolButton::clicked, this, &MainWindow::next);
-    connect(miniExpand,       &QToolButton::clicked, this, &MainWindow::toggleMiniPlayer);
-    connect(miniMinimize,     &QToolButton::clicked, this, &MainWindow::showMinimized);
-    connect(miniClose,        &QToolButton::clicked, this, &MainWindow::close);
+    connect(m_miniPrevBtn,     &QToolButton::clicked, this, &MainWindow::previous);
+    connect(m_miniNextBtn,     &QToolButton::clicked, this, &MainWindow::next);
+    connect(m_miniExpandBtn,   &QToolButton::clicked, this, &MainWindow::toggleMiniPlayer);
+    connect(m_miniMinimizeBtn, &QToolButton::clicked, this, &MainWindow::showMinimized);
+    connect(m_miniCloseBtn,    &QToolButton::clicked, this, &MainWindow::close);
     connect(m_miniDockBtn,    &QToolButton::clicked, this, &MainWindow::toggleMiniDock);
     connect(m_miniPlayBtn,    &QToolButton::clicked, this, &MainWindow::togglePlayPause);
     connect(m_miniShuffleBtn, &QToolButton::clicked, this, &MainWindow::toggleShuffle);
@@ -981,7 +981,7 @@ void MainWindow::setupTray() {
 
     auto *tm = new QMenu(this);
     m_trayPlayAct = tm->addAction(Ico::play(theme.text, 16), "Играть", this, &MainWindow::togglePlayPause);
-    tm->addAction(Ico::next(theme.text, 16), "Следующий", this, &MainWindow::next);
+    m_trayNextAct = tm->addAction(Ico::next(theme.text, 16), "Следующий", this, &MainWindow::next);
     tm->addSeparator();
     tm->addAction("Показать окно", this, [this]{ show(); raise(); activateWindow(); });
     tm->addAction("Выход", qApp, &QApplication::quit);
@@ -1286,7 +1286,7 @@ void MainWindow::applyTheme() {
         QSlider#volSlider::groove:horizontal {
             height: 4px; background: #313244; border-radius: 2px;
         }
-        QSlider#volSlider::sub-page:horizontal { background: #a6e3a1; border-radius: 2px; }
+        QSlider#volSlider::sub-page:horizontal { background: ACCENT; border-radius: 2px; }
         QSlider#volSlider::handle:horizontal {
             background: #cdd6f4;
             width: 12px; height: 12px;
@@ -1294,7 +1294,7 @@ void MainWindow::applyTheme() {
             border-radius: 6px;
             border: none;
         }
-        QSlider#volSlider::handle:horizontal:hover { background: #a6e3a1; }
+        QSlider#volSlider::handle:horizontal:hover { background: ACCENT; }
 
         /* Обычный (безымянный) QSlider — например полосы эквалайзера в
            настройках — иначе рисуется нативным стилем ОС */
@@ -1494,6 +1494,11 @@ void MainWindow::applyTheme() {
         }
 
         QStackedWidget#settingsStack { background-color: #1e1e2e; }
+        QScrollArea#appearanceScroll {
+            background-color: #1e1e2e;
+            border: none;
+        }
+        QWidget#appearanceScrollContent { background-color: #1e1e2e; }
 
         QWidget#settingsFooter { border-top: 1px solid #313244; }
         QPushButton#settingsOkBtn {
@@ -1660,6 +1665,25 @@ void MainWindow::applyTheme() {
     if (m_prevBtn) m_prevBtn->setIcon(Ico::prev(controlColor, 22));
     if (m_nextBtn) m_nextBtn->setIcon(Ico::next(controlColor, 22));
     if (m_stopBtn) m_stopBtn->setIcon(Ico::stop(controlColor, 16));
+    const QColor secondaryIconColor = theme.subtext0;
+    if (m_miniPrevBtn) m_miniPrevBtn->setIcon(Ico::prev(secondaryIconColor, 16));
+    if (m_miniNextBtn) m_miniNextBtn->setIcon(Ico::next(secondaryIconColor, 16));
+    if (m_miniExpandBtn) m_miniExpandBtn->setIcon(Ico::expand(secondaryIconColor, 13));
+    if (m_miniMinimizeBtn) m_miniMinimizeBtn->setIcon(Ico::minimize(secondaryIconColor, 13));
+    if (m_miniCloseBtn) m_miniCloseBtn->setIcon(Ico::closeIcon(secondaryIconColor, 12));
+    if (m_miniDockBtn) {
+        const QColor dockColor = m_miniDockBtn->isChecked()
+            ? theme.accent : secondaryIconColor;
+        m_miniDockBtn->setIcon(Ico::dockTop(dockColor, 14));
+    }
+    if (m_micBtn) m_micBtn->setIcon(Ico::microphone(secondaryIconColor, 18));
+    if (m_openUrlAct) m_openUrlAct->setIcon(Ico::link(secondaryIconColor, 18));
+    if (m_scanLibraryAct) m_scanLibraryAct->setIcon(Ico::folder(secondaryIconColor, 18));
+    if (m_trayPlayAct) {
+        m_trayPlayAct->setIcon(playing
+            ? Ico::pause(theme.text, 16) : Ico::play(theme.text, 16));
+    }
+    if (m_trayNextAct) m_trayNextAct->setIcon(Ico::next(theme.text, 16));
     const QColor shuffleColor = m_shuffle ? theme.accent : theme.subtext0;
     if (m_shuffleBtn) m_shuffleBtn->setIcon(Ico::shuffle(shuffleColor, 18));
     if (m_miniShuffleBtn) m_miniShuffleBtn->setIcon(Ico::shuffle(shuffleColor, 15));
@@ -2943,42 +2967,93 @@ void MainWindow::updateRepeatButton() {
 }
 
 void MainWindow::toggleMiniPlayer() {
-    m_miniPlayer = !m_miniPlayer;
-
-    m_topWidget->setVisible(!m_miniPlayer);
-    m_separator->setVisible(!m_miniPlayer);
-    m_playlistPanel->setVisible(!m_miniPlayer);
-    m_miniBar->setVisible(m_miniPlayer);
-    menuBar()->setVisible(!m_miniPlayer);
-    statusBar()->setVisible(!m_miniPlayer);
-
-    if (m_miniPlayer) {
-        setMinimumSize(520, 52);
-        setMaximumHeight(52);
-        resize(720, 52);
-    } else {
-        // Выходим из мини-режима — если панель была прижата к верху, сбрасываем
-        if (m_miniDocked) {
-            m_miniDocked = false;
-            if (m_miniDockBtn) m_miniDockBtn->setChecked(false);
-        }
-        setMinimumSize(720, 540);
-        setMaximumHeight(QWIDGETSIZE_MAX);
-        resize(940, 660);
+    if (m_miniTransitioning) {
+        if (m_miniPlayerAct) m_miniPlayerAct->setChecked(m_miniPlayer);
+        return;
     }
 
-    // Без системного заголовка в мини-режиме — окно можно таскать за саму
-    // панель (см. eventFilter). Изменение флагов скрывает окно, поэтому
-    // после него обязательно вызываем show().
-    setWindowFlag(Qt::FramelessWindowHint, m_miniPlayer);
-    show();
+    m_miniTransitioning = true;
+    const bool enteringMini = !m_miniPlayer;
+    const QRect startGeometry = geometry();
+    if (enteringMini)
+        m_fullPlayerGeometry = startGeometry;
 
-    // Плавно проявляем ту панель, что стала видимой (смена флага окна
-    // выше уже пересоздала нативное окно, но дочерние виджеты — те же)
-    if (m_miniPlayer) fadeInWidget(m_miniBar, 300);
-    else { fadeInWidget(m_topWidget, 300); fadeInWidget(m_playlistPanel, 300); }
+    auto *fadeOut = new QPropertyAnimation(this, "windowOpacity", this);
+    fadeOut->setDuration(120);
+    fadeOut->setStartValue(windowOpacity());
+    fadeOut->setEndValue(0.0);
+    fadeOut->setEasingCurve(QEasingCurve::InCubic);
+    connect(fadeOut, &QPropertyAnimation::finished, this,
+            [this, enteringMini, startGeometry] {
+        m_miniPlayer = enteringMini;
 
-    if (m_miniPlayerAct) m_miniPlayerAct->setChecked(m_miniPlayer);
+        m_topWidget->setVisible(!m_miniPlayer);
+        m_separator->setVisible(!m_miniPlayer);
+        m_playlistPanel->setVisible(!m_miniPlayer);
+        m_miniBar->setVisible(m_miniPlayer);
+        menuBar()->setVisible(!m_miniPlayer);
+        statusBar()->setVisible(!m_miniPlayer && m_cfg.showStatusBar);
+
+        if (!m_miniPlayer && m_miniDocked) {
+            m_miniDocked = false;
+            if (m_miniDockBtn) {
+                m_miniDockBtn->setChecked(false);
+                const ThemePalette theme =
+                    ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+                m_miniDockBtn->setIcon(Ico::dockTop(theme.subtext0, 14));
+            }
+        }
+
+        // Relax constraints while the window itself morphs between the full
+        // player and the 52 px mini bar.
+        setMinimumSize(0, 0);
+        setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        setWindowFlag(Qt::FramelessWindowHint, m_miniPlayer);
+        show();
+        setWindowOpacity(0.0);
+        setGeometry(startGeometry);
+
+        QRect targetGeometry;
+        if (m_miniPlayer) {
+            targetGeometry = QRect(startGeometry.topLeft(), QSize(720, 52));
+        } else if (m_fullPlayerGeometry.isValid()) {
+            targetGeometry = m_fullPlayerGeometry;
+        } else {
+            targetGeometry = QRect(startGeometry.topLeft(), QSize(940, 660));
+        }
+
+        auto *geometryAnim = new QPropertyAnimation(this, "geometry", this);
+        geometryAnim->setDuration(360);
+        geometryAnim->setStartValue(startGeometry);
+        geometryAnim->setEndValue(targetGeometry);
+        geometryAnim->setEasingCurve(QEasingCurve::OutCubic);
+
+        auto *fadeIn = new QPropertyAnimation(this, "windowOpacity", this);
+        fadeIn->setDuration(260);
+        fadeIn->setStartValue(0.0);
+        fadeIn->setEndValue(1.0);
+        fadeIn->setEasingCurve(QEasingCurve::OutCubic);
+
+        connect(geometryAnim, &QPropertyAnimation::finished, this,
+                [this, targetGeometry] {
+            setGeometry(targetGeometry);
+            if (m_miniPlayer) {
+                setMinimumSize(520, 52);
+                setMaximumHeight(52);
+            } else {
+                setMinimumSize(720, 540);
+                setMaximumHeight(QWIDGETSIZE_MAX);
+            }
+            setWindowOpacity(1.0);
+            m_miniTransitioning = false;
+            if (m_miniPlayerAct)
+                m_miniPlayerAct->setChecked(m_miniPlayer);
+        });
+
+        geometryAnim->start(QAbstractAnimation::DeleteWhenStopped);
+        fadeIn->start(QAbstractAnimation::DeleteWhenStopped);
+    });
+    fadeOut->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 void MainWindow::toggleMiniDock() {
@@ -2987,6 +3062,12 @@ void MainWindow::toggleMiniDock() {
     if (!scr) return;
 
     m_miniDocked = !m_miniDocked;
+    if (m_miniDockBtn) {
+        const ThemePalette theme =
+            ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+        m_miniDockBtn->setIcon(Ico::dockTop(
+            m_miniDocked ? theme.accent : theme.subtext0, 14));
+    }
     const QRect avail = scr->availableGeometry();
 
     QRect target;
@@ -3550,7 +3631,8 @@ void MainWindow::showAbout() {
     tagline->setAlignment(Qt::AlignHCenter);
     bodyL->addWidget(tagline);
 
-    const QColor featIconColor(0xcb, 0xa6, 0xf7);
+    const QColor featIconColor =
+        ThemeManager::palette(m_cfg.theme, m_cfg.accentColor).accent;
     const struct { QIcon icon; QString text; } feats[] = {
         { Ico::link(featIconColor, 16),      "Ссылки: SoundCloud, YouTube и другие" },
         { Ico::equalizer(featIconColor, 16), "8-полосный графический эквалайзер" },
@@ -4355,7 +4437,7 @@ void MainWindow::stopEqEngine() {
 void MainWindow::syncEqEngineToCurrentTrack() {
     const QUrl src = m_player->source();
     const bool wantEq = m_cfg.eqEnabled && !src.isEmpty() &&
-                         src.isLocalFile() && !isVideoFile(src);
+                         src.isLocalFile();
     if (!wantEq) {
         const bool wasRunning = m_eqActive || m_eqPending;
         if (m_eqActive || m_eqPending) stopEqEngine();

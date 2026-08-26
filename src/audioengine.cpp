@@ -207,7 +207,6 @@ AudioEngine::~AudioEngine() {
 
 void AudioEngine::setSource(const QUrl &url) {
     if (m_sink) m_sink->stop();
-    if (m_decoder) m_decoder->stop();
     m_pendingPlay = false;
     m_pendingSeekMs = -1;
 
@@ -224,13 +223,20 @@ void AudioEngine::setSource(const QUrl &url) {
     m_pcm.clear();
     m_device->setPcm({}, 44100);
 
-    if (!m_decoder) {
-        m_decoder = new QAudioDecoder(this);
-        connect(m_decoder, &QAudioDecoder::bufferReady, this, &AudioEngine::onBufferReady);
-        connect(m_decoder, &QAudioDecoder::finished, this, &AudioEngine::onDecodeFinished);
-        connect(m_decoder, QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error),
-                this, &AudioEngine::onDecodeError);
+    // A decoder can still have queued bufferReady/finished signals after
+    // stop(). Reusing it while switching tracks may therefore complete the
+    // new request with buffers from the old file. Give every source its own
+    // decoder and reject any late signals from the retired instance.
+    if (m_decoder) {
+        disconnect(m_decoder, nullptr, this, nullptr);
+        m_decoder->stop();
+        m_decoder->deleteLater();
     }
+    m_decoder = new QAudioDecoder(this);
+    connect(m_decoder, &QAudioDecoder::bufferReady, this, &AudioEngine::onBufferReady);
+    connect(m_decoder, &QAudioDecoder::finished, this, &AudioEngine::onDecodeFinished);
+    connect(m_decoder, QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error),
+            this, &AudioEngine::onDecodeError);
 
     // Не навязываем декодеру конкретный формат (Float/44100 и т.п.) —
     // не все бэкенды готовы отдать именно такой, а при отказе декодер молча
@@ -242,6 +248,7 @@ void AudioEngine::setSource(const QUrl &url) {
 }
 
 void AudioEngine::onBufferReady() {
+    if (sender() != m_decoder) return;
     while (m_decoder->bufferAvailable()) {
         const QAudioBuffer buf = m_decoder->read();
         if (!buf.isValid()) continue;
@@ -297,6 +304,7 @@ void AudioEngine::onBufferReady() {
 }
 
 void AudioEngine::onDecodeFinished() {
+    if (sender() != m_decoder) return;
     if (m_pcm.isEmpty() || m_sampleRate <= 0) {
         m_pendingPlay = false;
         m_pendingSeekMs = -1;
@@ -324,6 +332,7 @@ void AudioEngine::onDecodeFinished() {
 }
 
 void AudioEngine::onDecodeError() {
+    if (sender() != m_decoder) return;
     m_decodedReady = false;
     const QString details = m_decoder->errorString().trimmed();
     emit decodeError(details.isEmpty() ? "Неизвестная ошибка декодирования." : details);
@@ -349,6 +358,14 @@ bool AudioEngine::ensureSink(int sampleRate) {
     if (m_sink) { m_sink->stop(); m_sink->deleteLater(); m_sink = nullptr; }
     m_device->configureOutput(fmt);
     m_sink = new QAudioSink(output, fmt, this);
+    QAudioSink *createdSink = m_sink;
+    connect(createdSink, &QAudioSink::stateChanged, this,
+            [this, createdSink](QAudio::State state) {
+        if (createdSink != m_sink || state != QAudio::StoppedState ||
+            createdSink->error() == QAudio::NoError)
+            return;
+        emit decodeError("Устройство вывода звука остановило обработанный поток.");
+    });
     return true;
 }
 

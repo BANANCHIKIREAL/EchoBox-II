@@ -33,6 +33,7 @@
 #include <QDirIterator>
 #include <QMessageBox>
 #include <QSlider>
+#include <QScrollArea>
 #include <QPainter>
 #include <array>
 
@@ -101,6 +102,16 @@ static QFrame *makeSep() {
     return f;
 }
 
+static QIcon settingsSectionIcon(const QString &id, const QColor &color) {
+    if (id == "appearance") return Ico::sliders(color, 18);
+    if (id == "player")     return Ico::play(color, 18);
+    if (id == "equalizer")  return Ico::equalizer(color, 18);
+    if (id == "files")      return Ico::folder(color, 18);
+    if (id == "interface")  return Ico::windowIcon(color, 18);
+    if (id == "integrations") return Ico::link(color, 18);
+    return {};
+}
+
 // ─── Constructor ─────────────────────────────────────────────────────────────
 
 SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
@@ -151,24 +162,34 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
     auto *tUi   = new QWidget; buildInterfaceTab(tUi);
     auto *tIntg = new QWidget; buildIntegrationsTab(tIntg);
 
-    const QColor iconColor(0xa6, 0xad, 0xc8);
-    const struct { QIcon icon; QString title; QWidget *page; } sections[] = {
-        { Ico::sliders(iconColor, 18),    "Внешний вид", tApp  },
-        { Ico::play(iconColor, 18),       "Плеер",       tPlay },
-        { Ico::equalizer(iconColor, 18),  "Эквалайзер",  tEq   },
-        { Ico::folder(iconColor, 18),     "Файлы",       tFile },
-        { Ico::windowIcon(iconColor, 18), "Интерфейс",   tUi   },
-        { Ico::link(iconColor, 18),       "Интеграции",  tIntg },
+    const ThemePalette initialPalette =
+        ThemeManager::palette(m_result.theme, m_result.accentColor);
+    const struct { const char *id; QString title; QWidget *page; } sections[] = {
+        { "appearance",   "Внешний вид", tApp  },
+        { "player",       "Плеер",       tPlay },
+        { "equalizer",    "Эквалайзер",  tEq   },
+        { "files",        "Файлы",       tFile },
+        { "interface",    "Интерфейс",   tUi   },
+        { "integrations", "Интеграции",  tIntg },
     };
     for (const auto &sec : sections) {
-        auto *item = new QListWidgetItem(sec.icon, "  " + sec.title);
+        const QString sectionId = QString::fromLatin1(sec.id);
+        auto *item = new QListWidgetItem(
+            settingsSectionIcon(sectionId, initialPalette.subtext0),
+            "  " + sec.title);
+        item->setData(Qt::UserRole, sectionId);
         item->setSizeHint(QSize(0, 38));
         sidebar->addItem(item);
         stack->addWidget(sec.page);
     }
     m_stack = stack;
+    m_sidebar = sidebar;
     sidebar->setCurrentRow(0);
-    connect(sidebar, &QListWidget::currentRowChanged, this, &SettingsDialog::animateToPage);
+    refreshSidebarIcons();
+    connect(sidebar, &QListWidget::currentRowChanged, this, [this](int index) {
+        refreshSidebarIcons();
+        animateToPage(index);
+    });
 
     auto *sidebarWrap = new QWidget(this);
     sidebarWrap->setObjectName("settingsSidebarWrap");
@@ -206,9 +227,25 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 
 void SettingsDialog::buildAppearanceTab(QWidget *tab) {
-    auto *l = new QVBoxLayout(tab);
+    auto *outer = new QVBoxLayout(tab);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
+
+    auto *scroll = new QScrollArea(tab);
+    scroll->setObjectName("appearanceScroll");
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    auto *content = new QWidget(scroll);
+    content->setObjectName("appearanceScrollContent");
+    auto *l = new QVBoxLayout(content);
     l->setContentsMargins(16,12,16,12);
     l->setSpacing(8);
+    l->setSizeConstraint(QLayout::SetMinAndMaxSize);
+
+    scroll->setWidget(content);
+    outer->addWidget(scroll);
 
     l->addWidget(makeHead("Тема интерфейса",
         "Тема меняет всю палитру: фон, панели, меню, плейлист, элементы\n"
@@ -537,9 +574,9 @@ void SettingsDialog::buildEqualizerTab(QWidget *tab) {
     l->setSpacing(8);
 
     l->addWidget(makeHead("Графический эквалайзер",
-        "Работает только для локальных аудиофайлов и треков по ссылке —\n"
-        "не влияет на видео. Требует отдельного аудио-движка: при первом\n"
-        "включении звук может на мгновение прерваться при переключении."));
+        "Работает для локальных файлов и треков по ссылке, если в файле\n"
+        "есть декодируемая аудиодорожка. При первом включении отдельному\n"
+        "аудио-движку может понадобиться немного времени на подготовку."));
 
     m_eqEnabledChk = new QCheckBox("Включить эквалайзер");
     m_eqEnabledChk->setChecked(m_result.eqEnabled);
@@ -831,7 +868,23 @@ void SettingsDialog::connectLive() {
 
 void SettingsDialog::liveApply() {
     collectResult();
+    refreshSidebarIcons();
     emit applied(m_result);
+}
+
+void SettingsDialog::refreshSidebarIcons() {
+    if (!m_sidebar) return;
+    const QString themeId = m_themeCombo
+        ? m_themeCombo->currentData().toString() : m_result.theme;
+    const ThemePalette palette =
+        ThemeManager::palette(themeId, m_result.accentColor);
+    for (int row = 0; row < m_sidebar->count(); ++row) {
+        QListWidgetItem *item = m_sidebar->item(row);
+        const QColor color = row == m_sidebar->currentRow()
+            ? palette.accent : palette.subtext0;
+        item->setIcon(settingsSectionIcon(
+            item->data(Qt::UserRole).toString(), color));
+    }
 }
 
 void SettingsDialog::showEvent(QShowEvent *event) {

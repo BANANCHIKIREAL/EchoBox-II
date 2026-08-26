@@ -16,7 +16,11 @@ WaveformSlider::WaveformSlider(QWidget *parent) : QWidget(parent) {
 }
 
 WaveformSlider::~WaveformSlider() {
-    if (m_decoder) m_decoder->stop();
+    ++m_decodeGeneration;
+    if (m_decoder) {
+        m_decoder->stop();
+        m_decoder = nullptr;
+    }
 }
 
 QSize WaveformSlider::sizeHint() const { return {400, 36}; }
@@ -53,23 +57,35 @@ void WaveformSlider::loadWaveform(const QUrl &url, qint64 durationMs) {
     m_decodeFinalized = false;
     m_samplesPerBin = 0;
 
-    if (!m_decoder) {
-        // QAudioDecoder runs as fast as the backend can decode. The previous
-        // hidden QMediaPlayer was limited to 4x realtime, so a long track could
-        // take tens of seconds before its waveform was complete.
-        m_decoder = new QAudioDecoder(this);
-        connect(m_decoder, &QAudioDecoder::bufferReady,
-                this, &WaveformSlider::onBufferReady);
-        connect(m_decoder, &QAudioDecoder::finished,
-                this, &WaveformSlider::onDecodeFinished);
-    }
+    // A decoder is intentionally created per request. Reusing a decoder while
+    // stop() is still settling can make a queued finished signal from the
+    // previous track finalize the next track and leave its waveform frozen.
+    auto *decoder = new QAudioDecoder(this);
+    m_decoder = decoder;
+    const quint64 generation = m_decodeGeneration;
+    connect(decoder, &QAudioDecoder::bufferReady, this,
+            [this, decoder, generation] {
+        if (decoder != m_decoder || generation != m_decodeGeneration) return;
+        onBufferReady();
+    });
+    connect(decoder, &QAudioDecoder::finished, this,
+            [this, decoder, generation] {
+        if (decoder != m_decoder || generation != m_decodeGeneration) return;
+        onDecodeFinished();
+    });
 
-    m_decoder->setSource(url);
-    m_decoder->start();
+    decoder->setSource(url);
+    decoder->start();
 }
 
 void WaveformSlider::setPeaks(const QVector<float> &peaks) {
-    if (m_decoder) m_decoder->stop();
+    ++m_decodeGeneration;
+    if (m_decoder) {
+        QAudioDecoder *decoder = m_decoder;
+        m_decoder = nullptr;
+        decoder->stop();
+        decoder->deleteLater();
+    }
     m_peaks.assign(peaks.begin(), peaks.end());
     m_bins       = int(m_peaks.size());
     m_binsFilled = int(m_peaks.size());
@@ -78,7 +94,13 @@ void WaveformSlider::setPeaks(const QVector<float> &peaks) {
 }
 
 void WaveformSlider::clearWaveform() {
-    if (m_decoder) m_decoder->stop();
+    ++m_decodeGeneration;
+    if (m_decoder) {
+        QAudioDecoder *decoder = m_decoder;
+        m_decoder = nullptr;
+        decoder->stop();
+        decoder->deleteLater();
+    }
     m_waveformUrl = QUrl();
     m_peaks.clear();
     m_binsFilled    = 0;

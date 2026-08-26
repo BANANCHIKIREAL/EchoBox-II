@@ -2,6 +2,7 @@
 #include <QWidget>
 #include <QVector>
 #include <QUrl>
+#include <QtGlobal>
 #include <vector>
 
 class QAudioBuffer;
@@ -62,6 +63,7 @@ private:
     int    m_binsFilled    = 0;
     int    m_lastSharedBin = 0;
     bool   m_decodeFinalized = false;
+    quint64 m_decodeGeneration = 0;
     qint64 m_durationMs    = 0;
     QUrl   m_waveformUrl;
 

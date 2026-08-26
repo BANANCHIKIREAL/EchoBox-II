@@ -206,11 +206,11 @@ inline QIcon music(QColor c, int size = 24) {
     // album placeholder. Using one fill also avoids translucent outline rings.
     p.setPen(Qt::NoPen);
     p.setBrush(c);
-    p.drawRoundedRect(QRectF(8.0, 4.5, 11.5, 3.0), 1.2, 1.2);
-    p.drawRoundedRect(QRectF(8.0, 5.5, 2.8, 12.5), 1.2, 1.2);
-    p.drawRoundedRect(QRectF(16.7, 5.5, 2.8, 10.5), 1.2, 1.2);
-    p.drawEllipse(QPointF(6.7, 18.0), 3.3, 2.4);
-    p.drawEllipse(QPointF(15.4, 16.0), 3.3, 2.4);
+    p.drawRoundedRect(QRectF(7.8, 4.5, 11.6, 3.0), 1.1, 1.1);
+    p.drawRoundedRect(QRectF(7.8, 5.7, 2.7, 11.8), 1.1, 1.1);
+    p.drawRoundedRect(QRectF(16.7, 5.7, 2.7, 11.8), 1.1, 1.1);
+    p.drawEllipse(QPointF(6.4, 17.5), 3.4, 2.5);
+    p.drawEllipse(QPointF(15.3, 17.5), 3.4, 2.5);
     return QIcon(pm);
 }
 
