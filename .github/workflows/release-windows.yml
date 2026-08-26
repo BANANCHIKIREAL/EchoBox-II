@@ -48,6 +48,24 @@ jobs:
       - name: Configure
         run: cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
 
+      - name: Verify package version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cmake = Get-Content -Raw -LiteralPath 'CMakeLists.txt'
+          if ($cmake -notmatch 'project\(EchoBoxII VERSION ([0-9]+\.[0-9]+\.[0-9]+)') {
+            throw 'Unable to read EchoBox II version from CMakeLists.txt'
+          }
+          $projectVersion = $Matches[1]
+          if ($env:RELEASE_TAG -match '^v') {
+            $tagVersion = $env:RELEASE_TAG.TrimStart('v')
+            if ($tagVersion -ne $projectVersion) {
+              throw "Release tag $tagVersion does not match project version $projectVersion"
+            }
+          }
+          "PACKAGE_VERSION=$projectVersion" | Out-File `
+            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Build
         run: cmake --build build/release --config Release --parallel 4
 
@@ -83,7 +101,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = ($env:RELEASE_TAG).TrimStart('v')
+          $version = $env:PACKAGE_VERSION
           New-Item -ItemType Directory -Force -Path release_pkg | Out-Null
           Compress-Archive -Path 'dist/EchoBox-II/*' `
             -DestinationPath "release_pkg/EchoBox-II-$version-portable.zip" `
@@ -107,7 +125,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = ($env:RELEASE_TAG).TrimStart('v')
+          $version = $env:PACKAGE_VERSION
           $assets = @(
             "release_pkg/EchoBox-II-$version-portable.zip",
             "installer_out/EchoBoxII-Setup-$version.exe"
@@ -138,7 +156,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = ($env:RELEASE_TAG).TrimStart('v')
+          $version = $env:PACKAGE_VERSION
           gh release create $env:RELEASE_TAG `
             "release_pkg/EchoBox-II-$version-portable.zip#EchoBox II $version portable" `
             "installer_out/EchoBoxII-Setup-$version.exe#EchoBox II $version installer" `
