@@ -3741,9 +3741,43 @@ static bool isNewerVersion(const QString &remote, const QString &local) {
     return false;
 }
 
+struct TrustedReleaseAsset {
+    QString name;
+    QString url;
+    QString digest;
+    qint64 size = -1;
+};
+
+static bool isSafeReleaseTag(const QString &tag) {
+    static const QRegularExpression pattern(
+        R"(^v?\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?$)");
+    return pattern.match(tag).hasMatch();
+}
+
+static bool isValidSha256Digest(const QString &digest) {
+    static const QRegularExpression pattern(R"(^sha256:[0-9a-fA-F]{64}$)");
+    return pattern.match(digest).hasMatch();
+}
+
+static bool isTrustedReleaseAssetUrl(const TrustedReleaseAsset &asset,
+                                     const QString &tag) {
+    const QUrl url(asset.url);
+    if (!url.isValid() || url.scheme().compare("https", Qt::CaseInsensitive) != 0 ||
+        url.host().compare("github.com", Qt::CaseInsensitive) != 0 ||
+        !isSafeReleaseTag(tag) || asset.name.isEmpty())
+        return false;
+
+    const QString expectedPath = QString(
+        "/BANANCHIKIREAL/EchoBox-II/releases/download/%1/%2")
+        .arg(tag, asset.name);
+    return url.path() == expectedPath && asset.size > 0 &&
+           isValidSha256Digest(asset.digest);
+}
+
 void MainWindow::checkForUpdates(bool manual) {
     QNetworkRequest req((QUrl(kUpdateApiUrl)));
     req.setRawHeader("Accept", "application/vnd.github+json");
+    req.setRawHeader("X-GitHub-Api-Version", "2026-03-10");
     req.setRawHeader("User-Agent", "EchoBoxII-UpdateCheck");
 
     QNetworkReply *reply = m_streamArtNam->get(req);
@@ -3786,23 +3820,42 @@ void MainWindow::checkForUpdates(bool manual) {
         // Установленную версию обновляем через Inno Setup: он сохраняет
         // каталог установки и заново создаёт ярлыки. Portable-сборку
         // по-прежнему обновляем ZIP-архивом на месте.
-        QString installerUrl;
-        QString zipUrl;
+        if (!isSafeReleaseTag(tag)) {
+            if (manual)
+                statusBar()->showMessage("GitHub вернул небезопасный номер версии", 6000);
+            return;
+        }
+
+        QString version = tag;
+        if (version.startsWith('v', Qt::CaseInsensitive)) version.remove(0, 1);
+        const QString expectedInstallerName =
+            QString("EchoBoxII-Setup-%1.exe").arg(version);
+        const QString expectedZipName =
+            QString("EchoBox-II-%1-portable.zip").arg(version);
+        TrustedReleaseAsset installerAsset;
+        TrustedReleaseAsset zipAsset;
         for (const QJsonValue &a : newest.value("assets").toArray()) {
             const QJsonObject ao = a.toObject();
             const QString name = ao.value("name").toString();
-            const QString downloadUrl = ao.value("browser_download_url").toString();
-            if (name.endsWith(".exe", Qt::CaseInsensitive)
-                && name.contains("setup", Qt::CaseInsensitive))
-                installerUrl = downloadUrl;
-            else if (name.endsWith(".zip", Qt::CaseInsensitive))
-                zipUrl = downloadUrl;
+            TrustedReleaseAsset candidate;
+            candidate.name = name;
+            candidate.url = ao.value("browser_download_url").toString();
+            candidate.digest = ao.value("digest").toString();
+            candidate.size = qint64(ao.value("size").toDouble(-1));
+            if (name == expectedInstallerName)
+                installerAsset = candidate;
+            else if (name == expectedZipName)
+                zipAsset = candidate;
         }
         const QString appDir = QCoreApplication::applicationDirPath();
         const bool installedBuild = QFileInfo(appDir + "/unins000.exe").exists();
-        const QString assetUrl = installedBuild && !installerUrl.isEmpty()
-            ? installerUrl
-            : (!zipUrl.isEmpty() ? zipUrl : installerUrl);
+        TrustedReleaseAsset selectedAsset = installedBuild
+            ? installerAsset
+            : (!zipAsset.url.isEmpty() ? zipAsset : installerAsset);
+        const bool immutableRelease = newest.value("immutable").toBool(false);
+        const bool trustedAsset = immutableRelease &&
+                                  isTrustedReleaseAssetUrl(selectedAsset, tag);
+        if (!trustedAsset) selectedAsset = {};
 
         QDialog dialog(this);
         dialog.setObjectName("updateDialog");
@@ -3858,6 +3911,31 @@ void MainWindow::checkForUpdates(bool manual) {
         versionLayout->addStretch();
         versionLayout->addWidget(newVersion);
         root->addWidget(versionCard);
+
+        auto *securityCard = new QFrame(&dialog);
+        securityCard->setObjectName(trustedAsset
+            ? "updateSecurityCard" : "updateSecurityWarning");
+        auto *securityLayout = new QHBoxLayout(securityCard);
+        securityLayout->setContentsMargins(14, 10, 14, 10);
+        securityLayout->setSpacing(10);
+        auto *securityBadge = new QLabel(trustedAsset ? QString::fromUtf8("✓")
+                                                       : QString::fromUtf8("!"), securityCard);
+        securityBadge->setObjectName("updateSecurityBadge");
+        securityBadge->setAlignment(Qt::AlignCenter);
+        securityBadge->setFixedSize(24, 24);
+        auto *securityText = new QLabel(securityCard);
+        securityText->setObjectName("updateSecurityText");
+        securityText->setWordWrap(true);
+        securityText->setText(trustedAsset
+            ? QString("Официальный неизменяемый релиз GitHub · размер %1 МБ\n"
+                      "Перед запуском файл будет проверен по SHA-256.")
+                  .arg(QString::number(selectedAsset.size / 1048576.0, 'f', 1))
+            : QStringLiteral("Безопасная автоустановка недоступна: релиз изменяемый либо "
+                             "GitHub не предоставил ожидаемый файл с SHA-256. Можно "
+                             "открыть страницу релиза."));
+        securityLayout->addWidget(securityBadge, 0, Qt::AlignTop);
+        securityLayout->addWidget(securityText, 1);
+        root->addWidget(securityCard);
 
         auto *notesTitle = new QLabel("Что изменилось", &dialog);
         notesTitle->setObjectName("updateNotesTitle");
@@ -3978,7 +4056,7 @@ void MainWindow::checkForUpdates(bool manual) {
             manual ? "Закрыть" : "Пропустить версию", &dialog);
         laterButton->setObjectName("updateSecondary");
         auto *installButton = new QPushButton(
-            assetUrl.isEmpty() ? "Открыть страницу" : "Установить обновление", &dialog);
+            selectedAsset.url.isEmpty() ? "Открыть страницу" : "Скачать и проверить", &dialog);
         installButton->setObjectName("updatePrimary");
         installButton->setDefault(true);
         buttons->addWidget(laterButton);
@@ -4007,6 +4085,26 @@ void MainWindow::checkForUpdates(bool manual) {
                 border-radius: 12px;
             }
             QLabel#updateArrow { color: ACCENT; font-size: 22px; font-weight: 700; }
+            QFrame#updateSecurityCard {
+                background-color: rgba(166, 227, 161, 22);
+                border: 1px solid rgba(166, 227, 161, 100);
+                border-radius: 10px;
+            }
+            QFrame#updateSecurityWarning {
+                background-color: rgba(249, 226, 175, 18);
+                border: 1px solid rgba(249, 226, 175, 90);
+                border-radius: 10px;
+            }
+            QLabel#updateSecurityBadge {
+                color: #181825;
+                background-color: #a6e3a1;
+                border-radius: 12px;
+                font-weight: 800;
+            }
+            QFrame#updateSecurityWarning QLabel#updateSecurityBadge {
+                background-color: #f9e2af;
+            }
+            QLabel#updateSecurityText { color: #bac2de; font-size: 11px; }
             QLabel#updateNotesTitle { color: #f5e0dc; font-size: 14px; font-weight: 700; }
             QTextBrowser#updateNotes {
                 color: #cdd6f4;
@@ -4054,7 +4152,9 @@ void MainWindow::checkForUpdates(bool manual) {
         QTimer::singleShot(0, &dialog, [fade]{ fade->start(QAbstractAnimation::DeleteWhenStopped); });
 
         if (dialog.exec() == QDialog::Accepted) {
-            if (!assetUrl.isEmpty()) downloadAndInstallUpdate(assetUrl, tag);
+            if (!selectedAsset.url.isEmpty())
+                downloadAndInstallUpdate(selectedAsset.url, tag, selectedAsset.name,
+                                         selectedAsset.digest, selectedAsset.size);
             else                     QDesktopServices::openUrl(QUrl(url));
         } else if (!manual) {
             m_settings.setValue(skipKey, tag);
@@ -4062,12 +4162,27 @@ void MainWindow::checkForUpdates(bool manual) {
     });
 }
 
-void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString &tag) {
+void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString &tag,
+                                          const QString &assetName,
+                                          const QString &expectedDigest,
+                                          qint64 expectedSize) {
+    const TrustedReleaseAsset asset{assetName, assetUrl, expectedDigest, expectedSize};
+    if (!isTrustedReleaseAssetUrl(asset, tag)) {
+        showCopyableError("Обновление заблокировано",
+            "Источник или контрольная сумма обновления не прошли проверку. "
+            "Файл не был скачан и запущен.");
+        return;
+    }
+
     showLoadingBanner("Скачивание обновления " + tag + "…");
     setLoadingProgress(0);
 
-    const bool installerAsset = QUrl(assetUrl).path().endsWith(".exe", Qt::CaseInsensitive);
-    QNetworkReply *reply = m_streamArtNam->get(QNetworkRequest(QUrl(assetUrl)));
+    const bool installerAsset = assetName.endsWith(".exe", Qt::CaseInsensitive);
+    QNetworkRequest request{QUrl(assetUrl)};
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+    request.setRawHeader("User-Agent", "EchoBoxII-SecureUpdater");
+    QNetworkReply *reply = m_streamArtNam->get(request);
     connect(reply, &QNetworkReply::downloadProgress, this,
         [this, tag](qint64 received, qint64 total) {
             if (total > 0) {
@@ -4077,7 +4192,8 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
             }
         });
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, tag, installerAsset]{
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, tag, assetName, expectedDigest, expectedSize, installerAsset]{
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
             hideLoadingBanner();
@@ -4085,6 +4201,26 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
             return;
         }
         const QByteArray data = reply->readAll();
+        const QUrl finalUrl = reply->url();
+        const QString finalHost = finalUrl.host().toLower();
+        const bool trustedFinalLocation =
+            finalUrl.scheme().compare("https", Qt::CaseInsensitive) == 0 &&
+            (finalHost == "github.com" ||
+             finalHost == "release-assets.githubusercontent.com");
+        const QByteArray actualHash =
+            QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex();
+        const QByteArray expectedHash = expectedDigest.mid(7).toLatin1().toLower();
+        if (!trustedFinalLocation || data.size() != expectedSize ||
+            actualHash != expectedHash) {
+            hideLoadingBanner();
+            showCopyableError("Обновление заблокировано",
+                QString("Проверка безопасности не пройдена. Файл не будет запущен.\n\n"
+                        "Файл: %1\nОжидался SHA-256: %2\nПолучен SHA-256: %3")
+                    .arg(assetName, QString::fromLatin1(expectedHash),
+                         QString::fromLatin1(actualHash)));
+            return;
+        }
+        updateLoadingText("SHA-256 подтверждён · подготовка установки " + tag + "…");
 
         const QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
                                + "/EchoBoxII_update";
@@ -4101,41 +4237,18 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
             }
             setup.close();
 
-            const QString exePath = QCoreApplication::applicationFilePath();
-            const QString scriptPath = tempDir + "/apply_installer_update.ps1";
-            QFile script(scriptPath);
-            if (!script.open(QIODevice::WriteOnly | QIODevice::Text)) {
-                hideLoadingBanner();
-                statusBar()->showMessage("Не удалось подготовить установку обновления", 6000);
-                return;
-            }
-            QTextStream out(&script);
-            out << "$targetPid = " << QCoreApplication::applicationPid() << "\n"
-                << "for ($i = 0; $i -lt 150; $i++) {\n"
-                << "    if (-not (Get-Process -Id $targetPid -ErrorAction SilentlyContinue)) { break }\n"
-                << "    Start-Sleep -Milliseconds 200\n"
-                << "}\n"
-                << "$setup = '" << setupPath << "'\n"
-                << "$args = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS')\n"
-                << "$process = Start-Process -FilePath $setup -ArgumentList $args -Wait -PassThru\n"
-                << "if ($process.ExitCode -eq 0 -and (Test-Path -LiteralPath '" << exePath << "')) {\n"
-                << "    Start-Process -FilePath '" << exePath << "'\n"
-                << "}\n"
-                << "Remove-Item -Recurse -Force '" << tempDir << "' -ErrorAction SilentlyContinue\n";
-            script.close();
-
-            if (!QProcess::startDetached("powershell",
-                    {"-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-                     "-File", scriptPath})) {
+            hideLoadingBanner();
+            QMessageBox::information(this, "Безопасное обновление",
+                "Файл получен из официального релиза GitHub, размер и SHA-256 совпали. "
+                "Сейчас запустится установщик EchoBox II.");
+            saveSettings();
+            if (!QProcess::startDetached(setupPath,
+                    {"/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+                     "/CLOSEAPPLICATIONS"})) {
                 hideLoadingBanner();
                 statusBar()->showMessage("Не удалось запустить установщик обновления", 6000);
                 return;
             }
-
-            QMessageBox::information(this, "Обновление",
-                "Обновление " + tag + " скачано. Приложение сейчас закроется, "
-                "установщик восстановит файлы и ярлык, затем EchoBox II запустится снова.");
-            saveSettings();
             qApp->quit();
             return;
         }
@@ -4155,15 +4268,40 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
         updateLoadingText("Распаковка обновления " + tag + "…");
         setLoadingProgress(-1);
 
-        // Распаковка через PowerShell (есть на любой Windows 10/11 из коробки)
+        // Inspect every archive path before extraction. Even a correctly
+        // hashed archive must never be allowed to write outside our TEMP dir.
+        QProcess listProc;
+        listProc.start("tar", {"-tf", QDir::toNativeSeparators(zipPath)});
+        listProc.waitForFinished(30000);
+        bool archivePathsSafe = listProc.exitStatus() == QProcess::NormalExit &&
+                                listProc.exitCode() == 0;
+        const QStringList archiveEntries = QString::fromUtf8(
+            listProc.readAllStandardOutput()).split('\n', Qt::SkipEmptyParts);
+        for (QString entry : archiveEntries) {
+            entry = entry.trimmed();
+            entry.replace('\\', '/');
+            const QString clean = QDir::cleanPath(entry);
+            if (entry.startsWith('/') || entry.contains(':') || clean == ".." ||
+                clean.startsWith("../")) {
+                archivePathsSafe = false;
+                break;
+            }
+        }
+        if (!archivePathsSafe || archiveEntries.isEmpty()) {
+            hideLoadingBanner();
+            showCopyableError("Обновление заблокировано",
+                "Архив содержит небезопасные пути или не может быть проверен.");
+            return;
+        }
+
+        // Windows 10/11 includes bsdtar. Using it avoids script execution and
+        // keeps the portable update path transparent to security software.
         QProcess extractProc;
-        extractProc.start("powershell", {
-            "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
-            QString("Expand-Archive -LiteralPath '%1' -DestinationPath '%2' -Force")
-                .arg(zipPath, extractDir)
-        });
+        extractProc.start("tar", {"-xf", QDir::toNativeSeparators(zipPath),
+                                   "-C", QDir::toNativeSeparators(extractDir)});
         extractProc.waitForFinished(60000);
-        if (extractProc.exitCode() != 0) {
+        if (extractProc.exitStatus() != QProcess::NormalExit ||
+            extractProc.exitCode() != 0) {
             hideLoadingBanner();
             statusBar()->showMessage("Не удалось распаковать обновление", 6000);
             return;
@@ -4171,56 +4309,39 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
 
         const QString exeDir  = QCoreApplication::applicationDirPath();
         const QString exeName = QFileInfo(QCoreApplication::applicationFilePath()).fileName();
-        const QString scriptPath = tempDir + "/apply_update.ps1";
-
-        QFile script(scriptPath);
-        if (!script.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QString packageRoot = extractDir;
+        if (!QFileInfo::exists(packageRoot + "/" + exeName)) {
+            const QFileInfoList subdirs = QDir(packageRoot).entryInfoList(
+                QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+            if (!subdirs.isEmpty()) packageRoot = subdirs.constFirst().absoluteFilePath();
+        }
+        const QString packagedUpdater = packageRoot + "/EchoBoxUpdater.exe";
+        const QString temporaryUpdater = tempDir + "/EchoBoxUpdater.exe";
+        if (!QFileInfo::exists(packageRoot + "/" + exeName) ||
+            !QFileInfo::exists(packagedUpdater)) {
             hideLoadingBanner();
-            statusBar()->showMessage("Не удалось подготовить установку обновления", 6000);
+            showCopyableError("Обновление заблокировано",
+                "В проверенном архиве отсутствуют обязательные файлы EchoBox II.");
             return;
         }
-        QTextStream out(&script);
-        // Ждём, пока текущий процесс закроется, копируем поверх установки
-        // (со снимком старой версии в TEMP на случай отката), запускаем заново
-        out << "$targetPid = " << QCoreApplication::applicationPid() << "\n"
-            << "for ($i = 0; $i -lt 150; $i++) {\n"
-            << "    if (-not (Get-Process -Id $targetPid -ErrorAction SilentlyContinue)) { break }\n"
-            << "    Start-Sleep -Milliseconds 200\n"
-            << "}\n"
-            << "$src = '" << extractDir << "'\n"
-            << "if (-not (Test-Path (Join-Path $src '" << exeName << "'))) {\n"
-            << "    $sub = Get-ChildItem -Path $src -Directory | Select-Object -First 1\n"
-            << "    if ($sub) { $src = $sub.FullName }\n"
-            << "}\n"
-            // Папка установки может требовать прав администратора для записи
-            // (например Program Files) — тогда тихо перезапускаемся с UAC-
-            // запросом; если пользователь установил в свою папку (как сейчас),
-            // права не понадобятся и никакого запроса не будет вовсе
-            << "$testFile = Join-Path '" << exeDir << "' '.echobox_write_test'\n"
-            << "try {\n"
-            << "    [IO.File]::WriteAllText($testFile, 'x')\n"
-            << "    Remove-Item $testFile -Force -ErrorAction SilentlyContinue\n"
-            << "} catch {\n"
-            << "    Start-Process -FilePath 'powershell' -Verb RunAs -WindowStyle Hidden -ArgumentList "
-               "@('-NoProfile','-ExecutionPolicy','Bypass','-File', $PSCommandPath)\n"
-            << "    exit\n"
-            << "}\n"
-            << "$backup = Join-Path $env:TEMP ('EchoBoxII_backup_' + (Get-Date -Format 'yyyyMMddHHmmss'))\n"
-            << "Copy-Item -Path '" << exeDir << "' -Destination $backup -Recurse -Force -ErrorAction SilentlyContinue\n"
-            << "robocopy $src '" << exeDir << "' /E /IS /IT /NFL /NDL /NJH /NJS | Out-Null\n"
-            << "Start-Process -FilePath (Join-Path '" << exeDir << "' '" << exeName << "')\n"
-            << "Remove-Item -Recurse -Force '" << tempDir << "' -ErrorAction SilentlyContinue\n";
-        script.close();
+        QFile::remove(temporaryUpdater);
+        if (!QFile::copy(packagedUpdater, temporaryUpdater)) {
+            hideLoadingBanner();
+            statusBar()->showMessage("Не удалось подготовить безопасный updater", 6000);
+            return;
+        }
 
-        QProcess::startDetached("powershell",
-            {"-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", scriptPath});
-
-        QMessageBox::information(this, "Обновление",
-            "Обновление " + tag + " скачано. Приложение сейчас закроется и обновится "
-            "автоматически, затем перезапустится само.");
-        // qApp->quit() не проходит через closeEvent(), поэтому плейлисты и
-        // библиотека сами себя не сохранят — делаем это явно перед выходом
+        hideLoadingBanner();
+        QMessageBox::information(this, "Безопасное обновление",
+            "Архив получен из официального релиза GitHub, размер и SHA-256 совпали. "
+            "EchoBox II сейчас закроется, обновится и запустится снова.");
         saveSettings();
+        if (!QProcess::startDetached(temporaryUpdater,
+                {QString::number(QCoreApplication::applicationPid()), packageRoot,
+                 exeDir, exeName})) {
+            statusBar()->showMessage("Не удалось запустить безопасный updater", 6000);
+            return;
+        }
         qApp->quit();
     });
 }

@@ -17,9 +17,13 @@ on:
 
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  YTDLP_VERSION: "2026.08.19"
+  YTDLP_SHA256: "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a"
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build-and-release:
@@ -28,12 +32,12 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ env.RELEASE_TAG }}
 
       - name: Install Qt
-        uses: jurplel/install-qt-action@v4.3.1
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
         with:
           version: "6.8.3"
           arch: win64_mingw
@@ -54,6 +58,7 @@ jobs:
           $dist = Join-Path $PWD 'dist/EchoBox-II'
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
           Copy-Item -LiteralPath 'build/release/EchoBoxII.exe' -Destination $dist
+          Copy-Item -LiteralPath 'build/release/EchoBoxUpdater.exe' -Destination $dist
           Copy-Item -LiteralPath 'THIRD_PARTY_NOTICES.md' -Destination $dist
           windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw "$dist/EchoBoxII.exe"
 
@@ -66,8 +71,13 @@ jobs:
           }
 
           Invoke-WebRequest -UseBasicParsing `
-            -Uri 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe' `
+            -Uri "https://github.com/yt-dlp/yt-dlp/releases/download/$env:YTDLP_VERSION/yt-dlp.exe" `
             -OutFile (Join-Path $dist 'yt-dlp.exe')
+          $actualYtDlpHash = (Get-FileHash -Algorithm SHA256 `
+            -LiteralPath (Join-Path $dist 'yt-dlp.exe')).Hash.ToLowerInvariant()
+          if ($actualYtDlpHash -ne $env:YTDLP_SHA256) {
+            throw "yt-dlp SHA-256 mismatch: $actualYtDlpHash"
+          }
 
       - name: Package portable ZIP
         shell: pwsh
@@ -83,7 +93,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          choco install innosetup -y --no-progress
+          choco install innosetup --version=6.7.1 -y --no-progress
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
           if (-not (Test-Path -LiteralPath $iscc)) {
             throw "Inno Setup compiler not found: $iscc"
@@ -92,6 +102,34 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Inno Setup failed with exit code $LASTEXITCODE"
           }
+
+      - name: Publish SHA-256 checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = ($env:RELEASE_TAG).TrimStart('v')
+          $assets = @(
+            "release_pkg/EchoBox-II-$version-portable.zip",
+            "installer_out/EchoBoxII-Setup-$version.exe"
+          )
+          $lines = foreach ($asset in $assets) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
+            "$hash  $(Split-Path -Leaf $asset)"
+          }
+          [IO.File]::WriteAllLines(
+            (Join-Path $PWD 'release_pkg/SHA256SUMS.txt'),
+            $lines,
+            [Text.UTF8Encoding]::new($false))
+
+      - name: Attest portable build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: release_pkg/EchoBox-II-*-portable.zip
+
+      - name: Attest installer build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: installer_out/EchoBoxII-Setup-*.exe
 
       - name: Publish GitHub release
         if: github.event_name == 'push' || inputs.publish_release
@@ -104,6 +142,8 @@ jobs:
           gh release create $env:RELEASE_TAG `
             "release_pkg/EchoBox-II-$version-portable.zip#EchoBox II $version portable" `
             "installer_out/EchoBoxII-Setup-$version.exe#EchoBox II $version installer" `
+            "release_pkg/SHA256SUMS.txt#SHA-256 checksums" `
             --title "EchoBox II $env:RELEASE_TAG" `
             --generate-notes `
+            --verify-tag `
             --latest
