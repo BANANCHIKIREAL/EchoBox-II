@@ -96,6 +96,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <shobjidl.h>
+#include <shlobj.h>
 #include <shellapi.h>
 #include "../apo/ring.h"
 
