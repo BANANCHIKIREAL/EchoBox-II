@@ -93,6 +93,7 @@ private:
     void buildEqualizerTab(QWidget *tab);
     void collectResult();
     void connectLive();
+    void refreshSidebarIcons();
     void refreshPresetSwatches();
     void refreshThemePreview();
     void setEqPreset(const float (&gains)[kEqBandCount]);
@@ -100,6 +101,7 @@ private:
     AppSettings m_result;
 
     QStackedWidget *m_stack = nullptr;
+    QListWidget    *m_sidebar = nullptr;
 
     QLabel        *m_accentSwatch    = nullptr;
     QComboBox     *m_themeCombo      = nullptr;

@@ -271,10 +271,12 @@ private:
     int            m_lastVolume    = 70;
     bool           m_seeking       = false;
     bool           m_miniPlayer    = false;
+    bool           m_miniTransitioning = false;
     bool           m_miniDragging  = false;
     QPoint         m_miniDragOffset;
     bool           m_miniDocked    = false;  // растянут на всю ширину экрана и прижат к верху
     QRect          m_miniUndockedGeometry;   // геометрия для возврата при откреплении
+    QRect          m_fullPlayerGeometry;     // геометрия для плавного возврата из F11
 
     // ── Layout helpers ───────────────────────────────────────────────────────
     AuroraWidget   *m_aurora      = nullptr;
@@ -328,7 +330,9 @@ private:
 
     // ── Mini player ──────────────────────────────────────────────────────────
     QWidget     *m_miniBar        = nullptr;
+    QToolButton *m_miniPrevBtn    = nullptr;
     QToolButton *m_miniPlayBtn    = nullptr;
+    QToolButton *m_miniNextBtn    = nullptr;
     QLabel      *m_miniTitle      = nullptr;
     QLabel      *m_miniAlbumArt   = nullptr;
     WaveformSlider *m_miniWaveform  = nullptr;
@@ -337,6 +341,9 @@ private:
     QSlider     *m_miniVolSlider  = nullptr;
     QToolButton *m_miniMuteBtn    = nullptr;
     QToolButton *m_miniDockBtn    = nullptr;
+    QToolButton *m_miniExpandBtn  = nullptr;
+    QToolButton *m_miniMinimizeBtn = nullptr;
+    QToolButton *m_miniCloseBtn   = nullptr;
 
     // ── Playlist panel ───────────────────────────────────────────────────────
     QWidget     *m_playlistPanel  = nullptr;
@@ -361,6 +368,8 @@ private:
 
     // ── Menu actions ─────────────────────────────────────────────────────────
     QMenu        *m_recentMenu     = nullptr;
+    QAction      *m_openUrlAct     = nullptr;
+    QAction      *m_scanLibraryAct = nullptr;
     QAction      *m_shuffleAct     = nullptr;
     QAction      *m_alwaysOnTopAct = nullptr;
     QAction      *m_miniPlayerAct  = nullptr;
@@ -371,6 +380,7 @@ private:
     // ── Tray ─────────────────────────────────────────────────────────────────
     QSystemTrayIcon *m_tray        = nullptr;
     QAction         *m_trayPlayAct = nullptr;
+    QAction         *m_trayNextAct = nullptr;
 
     // ── Audio analysis (Qt 6.6+) ─────────────────────────────────────────────
 #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
