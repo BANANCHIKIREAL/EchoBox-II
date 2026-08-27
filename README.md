@@ -2,7 +2,23 @@
 
 EchoBox II — музыкальный плеер для Windows. Он воспроизводит локальные аудио- и видеофайлы, умеет добавлять музыку по ссылкам и сохраняет плейлисты между запусками.
 
-![Главное окно EchoBox II](assets/preview.png)
+## Скриншоты
+
+### Главное окно
+
+![Главное окно EchoBox II](assets/screenshots/main-window.png)
+
+### Настройки
+
+![Настройки EchoBox II](assets/screenshots/settings.png)
+
+### Мини-плеер
+
+![Мини-плеер EchoBox II](assets/screenshots/mini-player.png)
+
+### Мини-плеер во всю ширину экрана
+
+![Мини-плеер EchoBox II во всю ширину](assets/screenshots/mini-player-wide.png)
 
 ## Скачать
 
