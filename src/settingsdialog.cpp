@@ -37,7 +37,6 @@
 #include <QPainter>
 #include <array>
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 static QWidget *makeFolderRow(QLineEdit *&edit, const QString &val,
                                const QString &placeholder,
@@ -55,7 +54,6 @@ static QWidget *makeFolderRow(QLineEdit *&edit, const QString &val,
     return w;
 }
 
-// Короткая вспышка непрозрачности — визуальное подтверждение клика/выбора
 static void flashWidget(QWidget *w, int durationMs = 260) {
     if (!w) return;
     auto *effect = new QGraphicsOpacityEffect(w);
@@ -69,7 +67,6 @@ static void flashWidget(QWidget *w, int durationMs = 260) {
     anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
-// Section heading with optional ? help button
 static QWidget *makeHead(const QString &title, const QString &help = "") {
     auto *w = new QWidget;
     auto *l = new QHBoxLayout(w);
@@ -112,7 +109,6 @@ static QIcon settingsSectionIcon(const QString &id, const QColor &color) {
     return {};
 }
 
-// ─── Constructor ─────────────────────────────────────────────────────────────
 
 SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
     : QDialog(parent), m_result(s)
@@ -125,7 +121,6 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // ── Header ───────────────────────────────────────────────────────────────
     auto *header = new QWidget(this);
     header->setObjectName("settingsHeader");
     auto *headerL = new QVBoxLayout(header);
@@ -139,7 +134,6 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
     headerL->addWidget(subLbl);
     root->addWidget(header);
 
-    // ── Body: sidebar + pages ───────────────────────────────────────────────
     auto *body = new QHBoxLayout;
     body->setContentsMargins(0, 0, 0, 0);
     body->setSpacing(0);
@@ -201,7 +195,6 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
     body->addWidget(stack, 1);
     root->addLayout(body, 1);
 
-    // ── Footer ───────────────────────────────────────────────────────────────
     auto *footer = new QWidget(this);
     footer->setObjectName("settingsFooter");
     auto *footerL = new QHBoxLayout(footer);
@@ -224,7 +217,6 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
     connectLive();
 }
 
-// ─── Tabs ─────────────────────────────────────────────────────────────────────
 
 void SettingsDialog::buildAppearanceTab(QWidget *tab) {
     auto *outer = new QVBoxLayout(tab);
@@ -342,7 +334,6 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
 
     l->addWidget(makeSep());
 
-    // Accent
     l->addWidget(makeHead("Цвет акцента",
         "Основной цвет интерфейса: кнопка воспроизведения,\n"
         "выделенный текст, активные элементы.\n\n"
@@ -401,7 +392,6 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
 
     l->addWidget(makeSep());
 
-    // Font family
     l->addWidget(makeHead("Шрифт интерфейса",
         "Шрифт для всего текста в приложении.\n"
         "Оставь пустым — будет использоваться системный шрифт (Segoe UI)."));
@@ -446,7 +436,6 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
 
     l->addWidget(makeSep());
 
-    // Font size
     l->addWidget(makeHead("Размер шрифта",
         "Базовый размер текста во всём приложении.\n"
         "Малый: 11px  |  Средний: 13px  |  Крупный: 15px"));
@@ -466,7 +455,6 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
 
     l->addWidget(makeSep());
 
-    // Art shape
     l->addWidget(makeHead("Форма обложки",
         "Форма квадрата с обложкой альбома в левой панели:\n"
         "• Скруглённая — мягкие углы (12px)\n"
@@ -646,8 +634,6 @@ void SettingsDialog::buildEqualizerTab(QWidget *tab) {
 }
 
 void SettingsDialog::setEqPreset(const float (&gains)[kEqBandCount]) {
-    // Update all eight controls as one operation. Previously a preset emitted
-    // eight complete live-apply cycles (including full theme refreshes).
     for (int i = 0; i < kEqBandCount; ++i) {
         const QSignalBlocker blocker(m_eqSliders[i]);
         const int value = int(gains[i]);
@@ -842,10 +828,8 @@ void SettingsDialog::buildIntegrationsTab(QWidget *tab) {
     l->addStretch();
 }
 
-// ─── Logic ───────────────────────────────────────────────────────────────────
 
 void SettingsDialog::connectLive() {
-    // Connect all toggleable widgets to liveApply
     for (QObject *obj : m_liveWidgets) {
         if (auto *cb = qobject_cast<QCheckBox*>(obj))
             connect(cb, &QCheckBox::toggled, this, &SettingsDialog::liveApply);
@@ -858,10 +842,8 @@ void SettingsDialog::connectLive() {
             connect(list, &QListWidget::currentRowChanged,
                     this, &SettingsDialog::liveApply);
     }
-    // Font group
     connect(m_fontGroup, QOverload<int,bool>::of(&QButtonGroup::idToggled),
             this, [this](int, bool checked){ if (checked) liveApply(); });
-    // Font family combo
     connect(m_fontFamilyCombo, &QFontComboBox::currentFontChanged,
             this, [this]{ liveApply(); });
 }
@@ -989,7 +971,6 @@ void SettingsDialog::collectResult() {
         : "classic";
     m_result.fontSizeIdx = m_fontGroup->checkedId();
     m_result.fontFamily  = m_fontFamilyCombo->currentFont().family();
-    // fontFilePath already updated directly in the browse/reset handlers
     const QStringList av = {"rounded","square","circle"};
     m_result.artShape    = av.value(m_artShapeCombo->currentIndex(), "rounded");
 
@@ -999,7 +980,6 @@ void SettingsDialog::collectResult() {
     m_result.seekStepSecs   = m_seekStepCombo->currentData().toInt();
     m_result.volumeStep     = m_volumeStepCombo->currentData().toInt();
     m_result.eqEnabled      = m_eqEnabledChk->isChecked();
-    // eqBands[] уже обновляются напрямую в лямбде valueChanged каждого слайдера
 
     m_result.libraryFolder   = m_libraryEdit->text().trimmed();
     m_result.playlistsFolder = m_playlistsEdit->text().trimmed();

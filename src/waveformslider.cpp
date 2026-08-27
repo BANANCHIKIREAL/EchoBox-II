@@ -25,7 +25,6 @@ WaveformSlider::~WaveformSlider() {
 
 QSize WaveformSlider::sizeHint() const { return {400, 36}; }
 
-// ── Slider API ───────────────────────────────────────────────────────────────
 
 void WaveformSlider::setRange(int min, int max) {
     m_min = min; m_max = max;
@@ -40,7 +39,6 @@ void WaveformSlider::setValue(int v) {
     update();
 }
 
-// ── Waveform loading ─────────────────────────────────────────────────────────
 
 void WaveformSlider::loadWaveform(const QUrl &url, qint64 durationMs) {
     clearWaveform();
@@ -57,9 +55,6 @@ void WaveformSlider::loadWaveform(const QUrl &url, qint64 durationMs) {
     m_decodeFinalized = false;
     m_samplesPerBin = 0;
 
-    // A decoder is intentionally created per request. Reusing a decoder while
-    // stop() is still settling can make a queued finished signal from the
-    // previous track finalize the next track and leave its waveform frozen.
     auto *decoder = new QAudioDecoder(this);
     m_decoder = decoder;
     const quint64 generation = m_decodeGeneration;
@@ -113,13 +108,11 @@ void WaveformSlider::clearWaveform() {
     update();
 }
 
-// ── Theme ────────────────────────────────────────────────────────────────────
 
 void WaveformSlider::setAccentColor(const QColor &c) { m_accent = c; update(); }
 void WaveformSlider::setTrackColor (const QColor &c) { m_track  = c; update(); }
 void WaveformSlider::setBackgroundColor(const QColor &c) { m_background = c; update(); }
 
-// ── Background decoder slots ─────────────────────────────────────────────────
 
 void WaveformSlider::onBufferReady() {
     if (!m_decoder) return;
@@ -154,8 +147,6 @@ void WaveformSlider::onBufferReady() {
                 return 0.f;
             }
         };
-        // Four-times decimation is far above the visual resolution of 500
-        // bars and cuts amplitude-analysis work substantially.
         for (int i = 0; i < frames && m_binsFilled < m_bins; i += ANALYSIS_STRIDE) {
             float v = 0.f;
             for (int c = 0; c < ch; ++c)
@@ -170,8 +161,6 @@ void WaveformSlider::onBufferReady() {
         }
     }
 
-    // Once all visual bins are ready there is no reason to decode the rest of
-    // the track. Finalize here while the decoder is known to exist.
     if (m_bins > 0 && m_binsFilled >= m_bins) {
         m_decoder->stop();
         onDecodeFinished();
@@ -179,7 +168,6 @@ void WaveformSlider::onBufferReady() {
     }
     update();
 
-    // Update the mini player progressively without copying on every buffer.
     if (m_binsFilled - m_lastSharedBin >= 10 || m_binsFilled == m_bins) {
         m_lastSharedBin = m_binsFilled;
         emit peaksReady(m_waveformUrl,
@@ -205,7 +193,6 @@ void WaveformSlider::onDecodeFinished() {
     emit waveformReady(m_waveformUrl, m_durationMs, completed);
 }
 
-// ── Painting ─────────────────────────────────────────────────────────────────
 
 void WaveformSlider::paintEvent(QPaintEvent *) {
     QPainter p(this);
@@ -215,7 +202,6 @@ void WaveformSlider::paintEvent(QPaintEvent *) {
     const int H   = height();
     const int mid = H / 2;
 
-    // Background
     p.setPen(Qt::NoPen);
     p.setBrush(m_background);
     p.drawRoundedRect(rect(), 6, 6);
@@ -226,7 +212,6 @@ void WaveformSlider::paintEvent(QPaintEvent *) {
     const int cursorX = int(progress * (W - 1));
 
     if (m_peaks.empty()) {
-        // Fallback — simple progress line
         p.setBrush(m_track);   p.drawRect(0,     mid-1, W,        2);
         p.setBrush(m_accent);  p.drawRect(0,     mid-1, cursorX,  2);
     } else {
@@ -250,20 +235,17 @@ void WaveformSlider::paintEvent(QPaintEvent *) {
         }
     }
 
-    // Cursor line
     if (m_max > m_min) {
         p.setPen(QPen(QColor(255, 255, 255, 220), 1.5f));
         p.drawLine(cursorX, H_PAD, cursorX, H - H_PAD);
     }
 
-    // Hover ghost line
     if (m_hovered && m_hoverX >= 0 && m_hoverX != cursorX) {
         p.setPen(QPen(QColor(255, 255, 255, 50), 1));
         p.drawLine(m_hoverX, H_PAD, m_hoverX, H - H_PAD);
     }
 }
 
-// ── Mouse ────────────────────────────────────────────────────────────────────
 
 int WaveformSlider::valueToX(int v) const {
     if (m_max == m_min) return 0;

@@ -11,11 +11,9 @@
 
 const int kEqBandFreqs[kEqBandCount] = {60, 150, 400, 1000, 2400, 6000, 12000, 16000};
 
-// ─── BiquadState ─────────────────────────────────────────────────────────────
 
 void BiquadState::setPeaking(float sampleRate, float freq, float gainDb, float q) {
     if (gainDb == 0.0f || sampleRate <= 0.0f || freq >= sampleRate * 0.49f) {
-        // Идентичный фильтр — вообще не красит звук (быстрый путь для 0 дБ)
         b0 = 1; b1 = 0; b2 = 0; a1 = 0; a2 = 0;
         return;
     }
@@ -47,7 +45,6 @@ float BiquadState::process(float in) {
 
 void BiquadState::reset() { x1 = x2 = y1 = y2 = 0; }
 
-// ─── EqPlaybackDevice ──────────────────────────────────────────────────────
 
 EqPlaybackDevice::EqPlaybackDevice(QObject *parent) : QIODevice(parent) {
     for (int i = 0; i < kEqBandCount; ++i) m_bandGains[i].store(0.0f);
@@ -59,7 +56,7 @@ void EqPlaybackDevice::setPcm(QVector<float> interleavedStereo, int sampleRate) 
     m_sourceSampleRate = sampleRate;
     m_totalFrames.store(m_pcm.size() / 2);
     m_frameCursor.store(0.0);
-    m_filtersInited = false;   // частота дискретизации могла смениться — пересчитать
+    m_filtersInited = false;
 }
 
 void EqPlaybackDevice::configureOutput(const QAudioFormat &format) {
@@ -83,8 +80,6 @@ void EqPlaybackDevice::setBandGain(int band, float dB) {
 }
 
 qint64 EqPlaybackDevice::bytesAvailable() const {
-    // "Данные" тут генерируются по требованию (сэмплы или тишина в хвосте),
-    // так что честного deferred-EOF не нужно — всегда говорим, что есть что читать
     return 64 * 1024 + QIODevice::bytesAvailable();
 }
 
@@ -146,7 +141,7 @@ qint64 EqPlaybackDevice::readData(char *data, qint64 maxSize) {
 
     qint64 framesWritten = 0;
     for (; framesWritten < framesRequested; ++framesWritten) {
-        if (cursor >= double(total)) break;   // конец трека — дальше тишина
+        if (cursor >= double(total)) break;
         float stereo[2] = {0.0f, 0.0f};
         for (int ch = 0; ch < 2; ++ch) {
             float s = sampleAt(ch, cursor);
@@ -195,7 +190,6 @@ qint64 EqPlaybackDevice::readData(char *data, qint64 maxSize) {
 
 qint64 EqPlaybackDevice::writeData(const char *, qint64) { return -1; }
 
-// ─── AudioEngine ─────────────────────────────────────────────────────────────
 
 AudioEngine::AudioEngine(QObject *parent) : QObject(parent) {
     m_device = new EqPlaybackDevice(this);
@@ -210,9 +204,6 @@ void AudioEngine::setSource(const QUrl &url) {
     m_pendingPlay = false;
     m_pendingSeekMs = -1;
 
-    // Disabling and re-enabling EQ for the same track should be immediate.
-    // The decoded PCM already lives in EqPlaybackDevice, so reuse it instead
-    // of decoding the whole file again.
     if (url == m_source && m_decodedReady && m_device->totalFrames() > 0) {
         QMetaObject::invokeMethod(this, [this]{ emit ready(); }, Qt::QueuedConnection);
         return;
@@ -223,10 +214,6 @@ void AudioEngine::setSource(const QUrl &url) {
     m_pcm.clear();
     m_device->setPcm({}, 44100);
 
-    // A decoder can still have queued bufferReady/finished signals after
-    // stop(). Reusing it while switching tracks may therefore complete the
-    // new request with buffers from the old file. Give every source its own
-    // decoder and reject any late signals from the retired instance.
     if (m_decoder) {
         disconnect(m_decoder, nullptr, this, nullptr);
         m_decoder->stop();
@@ -238,10 +225,6 @@ void AudioEngine::setSource(const QUrl &url) {
     connect(m_decoder, QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error),
             this, &AudioEngine::onDecodeError);
 
-    // Не навязываем декодеру конкретный формат (Float/44100 и т.п.) —
-    // не все бэкенды готовы отдать именно такой, а при отказе декодер молча
-    // не даёт ни одного буфера. Вместо этого читаем то, что реально пришло
-    // (см. onBufferReady), каким бы ни было исходное качество/частота файла
     m_sampleRate = 0;
     m_decoder->setSource(url);
     m_decoder->start();
@@ -296,7 +279,6 @@ void AudioEngine::onBufferReady() {
             break;
         }
         default:
-            // Неизвестный формат сэмплов — этот буфер прочитать не можем
             m_pcm.resize(n);
             break;
         }

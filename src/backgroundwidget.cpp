@@ -79,7 +79,6 @@ void AuroraWidget::tick()
         if (p.x > 1.f) p.x -= 1.f;
     }
 
-    // Regenerate film grain every 3 frames
     if (++m_grainTick % 3 == 0) {
         constexpr int GS = 256;
         m_grain = QImage(GS, GS, QImage::Format_ARGB32);
@@ -105,37 +104,32 @@ void AuroraWidget::paintEvent(QPaintEvent *)
     const float H = float(height());
     const float t = m_phase;
 
-    // ── Deep gradient base ────────────────────────────────────────────────────
     QLinearGradient base(0, 0, 0, H);
     base.setColorAt(0.0, m_baseTop);
     base.setColorAt(0.5, m_baseMiddle);
     base.setColorAt(1.0, m_baseBottom);
     p.fillRect(rect(), base);
 
-    // ── Blobs ─────────────────────────────────────────────────────────────────
     struct Blob {
-        float bx, by;       // base position (0..1)
-        float ax, ay;       // motion amplitude
-        float fx, fy;       // motion frequency
-        float px, py;       // phase offset
-        float radius;       // fraction of W
+        float bx, by;
+        float ax, ay;
+        float fx, fy;
+        float px, py;
+        float radius;
         int   colorIdx, a;
-        float reactivity;   // response to beat/amp
+        float reactivity;
     };
 
     static const Blob blobs[] = {
-        // 4 large slow base blobs
         { 0.18f, 0.28f,  0.13f,0.16f,  0.52f,0.40f,  0.00f,0.00f,  0.58f,  0, 52, 0.7f },
         { 0.76f, 0.58f,  0.11f,0.13f,  0.57f,0.48f,  1.57f,0.80f,  0.54f,  1, 50, 0.8f },
         { 0.48f, 0.82f,  0.09f,0.11f,  0.65f,0.60f,  3.14f,1.60f,  0.50f,  2, 38, 0.6f },
         { 0.86f, 0.14f,  0.08f,0.10f,  0.48f,0.43f,  4.71f,2.40f,  0.46f,  3, 32, 0.6f },
-        // 5 medium blobs
         { 0.33f, 0.62f,  0.11f,0.13f,  0.88f,0.75f,  2.50f,1.00f,  0.37f,  4, 46, 1.1f },
         { 0.64f, 0.28f,  0.10f,0.14f,  0.73f,0.82f,  0.70f,3.20f,  0.34f,  5, 42, 1.0f },
         { 0.14f, 0.74f,  0.09f,0.11f,  1.05f,0.63f,  1.80f,0.50f,  0.31f,  6, 34, 0.9f },
         { 0.88f, 0.72f,  0.08f,0.09f,  0.82f,0.70f,  5.50f,1.20f,  0.28f,  1, 38, 1.0f },
         { 0.44f, 0.14f,  0.10f,0.12f,  0.92f,0.85f,  0.30f,4.00f,  0.26f,  0, 30, 0.8f },
-        // 3 small fast accent blobs (most reactive)
         { 0.24f, 0.44f,  0.15f,0.17f,  1.35f,1.18f,  2.10f,0.90f,  0.19f,  3, 75, 1.6f },
         { 0.68f, 0.78f,  0.13f,0.15f,  1.55f,1.32f,  3.80f,2.70f,  0.17f,  4, 68, 1.5f },
         { 0.54f, 0.50f,  0.12f,0.14f,  1.25f,1.12f,  0.50f,1.40f,  0.20f,  2, 62, 1.4f },
@@ -156,7 +150,6 @@ void AuroraWidget::paintEvent(QPaintEvent *)
         p.fillRect(rect(), g);
     }
 
-    // ── Particles ─────────────────────────────────────────────────────────────
     p.setPen(Qt::NoPen);
     for (const auto &pt : m_particles) {
         if (pt.y < 0.f || pt.y > 1.f) continue;
@@ -166,37 +159,31 @@ void AuroraWidget::paintEvent(QPaintEvent *)
         const float a  = pt.alpha * (0.55f + m_amp * 0.35f + m_beat * 0.25f);
         QColor col = m_themeColors.value(pt.colorIdx, QColor(0xcb,0xa6,0xf7));
 
-        // Outer halo
         col.setAlphaF(qMin(1.f, a * 0.12f));
         p.setBrush(col);
         p.drawEllipse(QPointF(px, py), sz * 3.0f, sz * 3.0f);
 
-        // Mid glow
         col.setAlphaF(qMin(1.f, a * 0.30f));
         p.setBrush(col);
         p.drawEllipse(QPointF(px, py), sz * 1.6f, sz * 1.6f);
 
-        // Bright core
         col.setAlphaF(qMin(1.f, a * 0.88f));
         p.setBrush(col);
         p.drawEllipse(QPointF(px, py), sz, sz);
     }
 
-    // ── Film grain overlay ────────────────────────────────────────────────────
     if (!m_grain.isNull()) {
         p.setOpacity(0.038);
         p.drawImage(rect(), m_grain);
         p.setOpacity(1.0);
     }
 
-    // ── Vignette ──────────────────────────────────────────────────────────────
     QRadialGradient vig(W * 0.5f, H * 0.5f, qMax(W, H) * 0.76f);
     vig.setColorAt(0.20f, Qt::transparent);
     vig.setColorAt(0.62f, QColor(m_baseBottom.red(), m_baseBottom.green(), m_baseBottom.blue(), 55));
     vig.setColorAt(1.00f, QColor(m_baseBottom.red(), m_baseBottom.green(), m_baseBottom.blue(), 210));
     p.fillRect(rect(), vig);
 
-    // ── Beat flash: центральная вспышка в такт музыке ─────────────────────────
     if (m_beat > 0.08f) {
         QRadialGradient flash(W * 0.5f, H * 0.42f, qMax(W, H) * 0.55f);
         const QColor first = m_themeColors.value(1, QColor(0xcb,0xa6,0xf7));

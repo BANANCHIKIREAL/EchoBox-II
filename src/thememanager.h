@@ -35,8 +35,6 @@ struct ThemePalette {
     QColor pink;
 };
 
-// Central theme catalogue and Catppuccin-token replacement. Keeping this out
-// of MainWindow makes new themes independent from player behaviour.
 class ThemeManager {
 public:
     static QList<ThemeInfo> themes();

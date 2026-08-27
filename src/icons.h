@@ -7,9 +7,6 @@
 #include <QPixmap>
 #include <QPolygonF>
 
-// Compact, dependency-free 24 px vector icon set. The geometry follows the
-// visual language of Tabler Icons: 2 px strokes, round caps and round joins.
-// Keeping the glyphs in code avoids shipping a font or hundreds of SVG files.
 namespace Ico {
 
 inline QPixmap makePixmap(int size) {
@@ -73,8 +70,6 @@ inline QIcon volume(int level, QColor c, int size = 24) {
     } else {
         if (level >= 1) p.drawArc(QRectF(11, 8, 5, 8), -55 * 16, 110 * 16);
         if (level >= 2) p.drawArc(QRectF(10.5, 5, 9, 14), -52 * 16, 104 * 16);
-        // Keep the outer wave inside the 24x24 canvas. Previously it reached
-        // x=26, so the maximum-volume icon clipped its last wave.
         if (level >= 3) p.drawArc(QRectF(10, 2.5, 12, 19), -48 * 16, 96 * 16);
     }
     return QIcon(pm);
@@ -91,9 +86,6 @@ inline QIcon shuffle(QColor c, int size = 24) {
 }
 
 inline void drawRepeat(QPainter &p) {
-    // Two clean curved arrows based on the supplied repeat icon. The source
-    // image also contains a solid circular background; only the arrow shapes
-    // are reproduced here so their color can still follow the active theme.
     p.save();
     const QColor color = p.pen().color();
     p.setPen(QPen(color, 2.35, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
@@ -202,8 +194,6 @@ inline QIcon equalizer(QColor c, int size = 24) {
 
 inline QIcon music(QColor c, int size = 24) {
     QPixmap pm = makePixmap(size); QPainter p(&pm); setup(p, c, size);
-    // A straight, filled double note stays balanced when enlarged for the
-    // album placeholder. Using one fill also avoids translucent outline rings.
     p.setPen(Qt::NoPen);
     p.setBrush(c);
     p.drawRoundedRect(QRectF(7.8, 4.5, 11.6, 3.0), 1.1, 1.1);
@@ -238,4 +228,4 @@ inline QIcon download(QColor c, int size = 24) {
     return QIcon(pm);
 }
 
-} // namespace Ico
+}

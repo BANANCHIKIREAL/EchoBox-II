@@ -86,7 +86,6 @@
 #include <numeric>
 #include <algorithm>
 
-// ─── APO shared-memory bridge (Windows) ──────────────────────────────────────
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -100,19 +99,11 @@
 #include <shellapi.h>
 #include "../apo/ring.h"
 
-// ─── Static data ─────────────────────────────────────────────────────────────
 
 static const QString kAppVersion = QStringLiteral(ECHOBOX_VERSION);
-// Не /releases/latest — этот эндпоинт у GitHub сознательно игнорирует
-// pre-release-версии (наши beta.*), поэтому берём общий список и находим
-// самую новую версию сами (ниже, в checkForUpdates)
 static const QString kUpdateApiUrl =
     "https://api.github.com/repos/BANANCHIKIREAL/EchoBox-II/releases";
 
-// ─── Автозапуск с Windows ────────────────────────────────────────────────────
-// Реестр — единственный источник истины (см. loadSettings/openSettings):
-// так UI всегда показывает актуальное состояние, даже если юзер выключил
-// автозапуск не через наши настройки, а через Параметры Windows напрямую.
 static const char *kAutostartRegPath =
     "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 static const char *kAutostartRegKey = "EchoBoxII";
@@ -164,7 +155,6 @@ const QStringList MainWindow::MEDIA_FILTER = {
     "Все файлы (*)"
 };
 
-// ─── Smooth playlist scrolling ───────────────────────────────────────────────
 
 class SmoothPlaylistWidget final : public QListWidget {
 public:
@@ -207,7 +197,6 @@ private:
     int m_scrollTarget = 0;
 };
 
-// ─── Custom playlist delegate (right-align duration) ─────────────────────────
 
 class PlaylistDelegate : public QStyledItemDelegate {
 public:
@@ -232,13 +221,11 @@ public:
     void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const override {
         p->save();
 
-        // Background
         if (opt.state & QStyle::State_Selected)
             p->fillRect(opt.rect, m_selectedBg);
         else if (opt.state & QStyle::State_MouseOver)
             p->fillRect(opt.rect, m_hoverBg);
 
-        // Duplicate highlight — drawn after base bg, before content
         if (idx.data(Qt::UserRole + 10).toBool())
             p->fillRect(opt.rect, QColor(m_duplicate.red(), m_duplicate.green(),
                                          m_duplicate.blue(), 40));
@@ -247,7 +234,6 @@ public:
         const int margin = 4;
         int textX = opt.rect.left() + 10;
 
-        // Icon
         if (showIcons) {
             QIcon icon = idx.data(Qt::DecorationRole).value<QIcon>();
             QRect ir(opt.rect.left() + margin,
@@ -255,7 +241,6 @@ public:
                      iconSz, iconSz);
             if (!icon.isNull()) {
                 QPixmap src = icon.pixmap(iconSz, iconSz);
-                // Render with rounded corners into an off-screen pixmap
                 QPixmap rounded(iconSz, iconSz);
                 rounded.fill(Qt::transparent);
                 {
@@ -270,7 +255,6 @@ public:
                 p->setRenderHint(QPainter::SmoothPixmapTransform);
                 p->drawPixmap(ir, rounded);
             } else {
-                // placeholder
                 p->setPen(Qt::NoPen);
                 p->setBrush(m_placeholderBg);
                 p->setRenderHint(QPainter::Antialiasing);
@@ -280,7 +264,6 @@ public:
             textX = ir.right() + 8;
         }
 
-        // Duration on right
         const QString dur = idx.data(Qt::UserRole + 1).toString();
         int rightEdge = opt.rect.right() - 8;
         if (!dur.isEmpty()) {
@@ -292,7 +275,6 @@ public:
             rightEdge = opt.rect.right() - dw - 12;
         }
 
-        // Track name
         QString text = idx.data(Qt::DisplayRole).toString();
         QFont tf = p->font(); tf.setPointSize(10); p->setFont(tf);
         p->setPen((opt.state & QStyle::State_Selected)
@@ -315,7 +297,6 @@ private:
 
 static PlaylistDelegate *g_delegate = nullptr;
 
-// ─── Constructor / Destructor ─────────────────────────────────────────────────
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -352,7 +333,6 @@ MainWindow::MainWindow(QWidget *parent)
             "плеер без него.\n\n" + msg);
     });
 
-    // Metadata-only reader — no audio output, used for background icon scanning
     m_metaReader = new QMediaPlayer(this);
     connect(m_metaReader, &QMediaPlayer::metaDataChanged,
             this, &MainWindow::handleMetaReaderUpdate);
@@ -377,12 +357,10 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onAudioBuffer);
 #endif
 
-    // Discord RPC — замени ID на свой: discord.com/developers/applications
     m_discord = new DiscordRPC("1516933454309228684", this);
 
     m_streamArtNam = new QNetworkAccessManager(this);
 
-    // Crossfade fade-in timer
     m_fadeInTimer = new QTimer(this);
     m_fadeInTimer->setInterval(40);
     connect(m_fadeInTimer, &QTimer::timeout, [this]{
@@ -408,7 +386,6 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowIcon(icon);
     syncShellShortcutIcon();
 
-    // Тихая фоновая проверка обновлений (не мешает старту, не спамит окнами)
     QTimer::singleShot(3000, this, [this]{ if (m_cfg.autoCheckUpdates) checkForUpdates(false); });
 }
 
@@ -416,10 +393,8 @@ MainWindow::~MainWindow() { apoCloseRing(); saveSettings(); }
 
 bool MainWindow::startsMinimized() const { return m_cfg.startMinimized; }
 
-// ─── Menu bar ────────────────────────────────────────────────────────────────
 
 void MainWindow::setupMenuBar() {
-    // ── Файл ──────────────────────────────────────────────────────────────────
     QMenu *fm = menuBar()->addMenu("&Файл");
     fm->addAction("&Открыть файлы...", QKeySequence(Qt::CTRL | Qt::Key_O),
                   this, &MainWindow::openFiles);
@@ -439,7 +414,6 @@ void MainWindow::setupMenuBar() {
     fm->addAction("&Выход", QKeySequence(Qt::CTRL | Qt::Key_Q),
                   qApp, &QApplication::quit);
 
-    // ── Воспроизведение ───────────────────────────────────────────────────────
     QMenu *pm = menuBar()->addMenu("&Воспроизведение");
     pm->addAction("Играть / Пауза", QKeySequence(Qt::Key_Space),
                   this, &MainWindow::togglePlayPause);
@@ -493,7 +467,6 @@ void MainWindow::setupMenuBar() {
         });
     }
 
-    // ── Вид ───────────────────────────────────────────────────────────────────
     QMenu *vm = menuBar()->addMenu("&Вид");
     m_miniPlayerAct = vm->addAction("Мини-плеер", QKeySequence(Qt::Key_F11),
                                     this, &MainWindow::toggleMiniPlayer);
@@ -501,7 +474,6 @@ void MainWindow::setupMenuBar() {
     m_alwaysOnTopAct = vm->addAction("Поверх всех окон", this, &MainWindow::toggleAlwaysOnTop);
     m_alwaysOnTopAct->setCheckable(true);
 
-    // ── Настройки / Справка ───────────────────────────────────────────────────
     QMenu *stMenu = menuBar()->addMenu("&Настройки");
     stMenu->addAction("Параметры...", QKeySequence(Qt::CTRL | Qt::Key_Comma),
                       this, &MainWindow::openSettings);
@@ -511,7 +483,6 @@ void MainWindow::setupMenuBar() {
     helpMenu->addAction("Проверить обновления...", [this]{ checkForUpdates(true); });
 }
 
-// ─── UI ──────────────────────────────────────────────────────────────────────
 
 void MainWindow::setupUi() {
     m_aurora = new AuroraWidget(this);
@@ -520,13 +491,11 @@ void MainWindow::setupUi() {
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // ══ TOP PANEL (album art + info + controls) ══════════════════════════════
     m_topWidget = new QWidget(this);
     QHBoxLayout *topL = new QHBoxLayout(m_topWidget);
     topL->setContentsMargins(14, 14, 14, 10);
     topL->setSpacing(18);
 
-    // ── Left: media stack ────────────────────────────────────────────────────
     m_mediaStack = new QStackedWidget(this);
     m_mediaStack->setFixedSize(230, 230);
     m_mediaStack->setObjectName("mediaStack");
@@ -543,13 +512,11 @@ void MainWindow::setupUi() {
     m_mediaStack->addWidget(m_videoWidget);
     topL->addWidget(m_mediaStack);
 
-    // ── Right: info + visualizer + controls ──────────────────────────────────
     QWidget *rp = new QWidget(this);
     QVBoxLayout *rl = new QVBoxLayout(rp);
     rl->setContentsMargins(4, 0, 0, 0);
     rl->setSpacing(0);
 
-    // ── Track info ────────────────────────────────────────────────────────────
     m_titleLabel = new QLabel("EchoBox II", this);
     m_titleLabel->setObjectName("titleLabel");
 
@@ -564,7 +531,6 @@ void MainWindow::setupUi() {
     rl->addWidget(m_artistLabel);
     rl->addWidget(m_albumLabel);
 
-    // ── Баннер загрузки (скачивание трека по ссылке / обновления) ────────────
     m_loadingBanner = new QWidget(this);
     m_loadingBanner->setObjectName("loadingBanner");
     auto *lbL = new QVBoxLayout(m_loadingBanner);
@@ -605,12 +571,10 @@ void MainWindow::setupUi() {
 
     rl->addStretch(1);
 
-    // ── Visualizer ────────────────────────────────────────────────────────────
     m_visualizer = new Visualizer(this);
     rl->addWidget(m_visualizer);
     rl->addSpacing(8);
 
-    // ── Seek bar ──────────────────────────────────────────────────────────────
     m_seekSlider = new WaveformSlider(this);
     m_seekSlider->setRange(0, 0);
     m_seekSlider->setObjectName("seekSlider");
@@ -630,14 +594,12 @@ void MainWindow::setupUi() {
     rl->addLayout(seekL);
     rl->addSpacing(14);
 
-    // ── Button factory ────────────────────────────────────────────────────────
     auto mkBtn = [this](const QString &tip, const QString &id, int sz) -> QToolButton* {
         auto *b = new QToolButton(this);
         b->setToolTip(tip); b->setObjectName(id); b->setFixedSize(sz, sz);
         return b;
     };
 
-    // ── Main transport: [⏮]  [▶▶BIG]  [⏭]   [⏹][⇄][↺] ──────────────────────
     m_prevBtn      = mkBtn("Предыдущий  Ctrl+←",         "ctrlBtn",  40);
     m_playPauseBtn = mkBtn("Играть / Пауза  Пробел",     "playBtn",  60);
     m_nextBtn      = mkBtn("Следующий  Ctrl+→",           "ctrlBtn",  40);
@@ -664,7 +626,6 @@ void MainWindow::setupUi() {
     rl->addLayout(c1);
     rl->addSpacing(10);
 
-    // ── Volume + Speed row ────────────────────────────────────────────────────
     m_muteBtn = mkBtn("Выкл. звук  M", "muteBtn", 30);
 
     m_volumeSlider = new QSlider(Qt::Horizontal, this);
@@ -684,7 +645,6 @@ void MainWindow::setupUi() {
     m_speedCombo->setToolTip("Скорость воспроизведения");
     m_speedCombo->setFixedWidth(68);
 
-    // Музыка → микрофон (через EchoBox APO, установи apo\install.bat)
     m_micBtn = mkBtn("ЛКМ — музыка в микрофон вкл/выкл\nПКМ — громкость и «только музыка»", "toggleBtn", 30);
     m_micBtn->setCheckable(true);
     m_micBtn->setIcon(Ico::microphone(QColor(0xa6, 0xad, 0xc8), 18));
@@ -692,7 +652,7 @@ void MainWindow::setupUi() {
     m_micBtn->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_micBtn, &QToolButton::customContextMenuRequested,
             this, [this]{ showMicMenu(); });
-    m_micBtn->setVisible(false); // временно скрыта — APO-вывод в микрофон ещё не готов
+    m_micBtn->setVisible(false);
 
     QHBoxLayout *c2 = new QHBoxLayout;
     c2->setSpacing(6);
@@ -711,13 +671,11 @@ void MainWindow::setupUi() {
     topL->addWidget(rp, 1);
     root->addWidget(m_topWidget);
 
-    // ── Separator ────────────────────────────────────────────────────────────
     m_separator = new QFrame(this);
     m_separator->setFrameShape(QFrame::HLine);
     m_separator->setObjectName("separator");
     root->addWidget(m_separator);
 
-    // ══ MINI BAR (visible only in mini player mode) ══════════════════════════
     m_miniBar = new QWidget(this);
     m_miniBar->setObjectName("miniBar");
     m_miniBar->setAutoFillBackground(false);
@@ -731,13 +689,11 @@ void MainWindow::setupUi() {
     const QColor pc(0x1e,0x1e,0x2e);
     const QColor tc(0xa6,0xad,0xc8);
 
-    // Album art
     m_miniAlbumArt = new QLabel(this);
     m_miniAlbumArt->setObjectName("miniAlbumArt");
     m_miniAlbumArt->setFixedSize(40, 40);
     m_miniAlbumArt->setScaledContents(true);
 
-    // Transport
     m_miniPrevBtn = new QToolButton(this); m_miniPrevBtn->setObjectName("ctrlBtn"); m_miniPrevBtn->setFixedSize(28,28);
     m_miniPrevBtn->setIcon(Ico::prev(mc,16)); m_miniPrevBtn->setIconSize({16,16});
 
@@ -747,12 +703,10 @@ void MainWindow::setupUi() {
     m_miniNextBtn = new QToolButton(this); m_miniNextBtn->setObjectName("ctrlBtn"); m_miniNextBtn->setFixedSize(28,28);
     m_miniNextBtn->setIcon(Ico::next(mc,16)); m_miniNextBtn->setIconSize({16,16});
 
-    // Title
     m_miniTitle = new QLabel("EchoBox II", this);
     m_miniTitle->setObjectName("miniTitle");
     m_miniTitle->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
-    // Shuffle + Repeat
     m_miniShuffleBtn = new QToolButton(this); m_miniShuffleBtn->setObjectName("toggleBtn");
     m_miniShuffleBtn->setFixedSize(26,26); m_miniShuffleBtn->setCheckable(true);
     m_miniShuffleBtn->setIcon(Ico::shuffle(tc,15)); m_miniShuffleBtn->setIconSize({15,15});
@@ -761,7 +715,6 @@ void MainWindow::setupUi() {
     m_miniRepeatBtn->setFixedSize(26,26); m_miniRepeatBtn->setCheckable(true);
     m_miniRepeatBtn->setIcon(Ico::repeatAll(tc,15)); m_miniRepeatBtn->setIconSize({15,15});
 
-    // Volume
     m_miniMuteBtn = new QToolButton(this); m_miniMuteBtn->setObjectName("muteBtn");
     m_miniMuteBtn->setFixedSize(24,24);
     m_miniMuteBtn->setIcon(Ico::volume(3,mc,18)); m_miniMuteBtn->setIconSize({18,18});
@@ -771,13 +724,11 @@ void MainWindow::setupUi() {
     m_miniVolSlider->setRange(0, 100); m_miniVolSlider->setValue(70);
     m_miniVolSlider->setFixedWidth(80);
 
-    // Expand
     m_miniExpandBtn = new QToolButton(this);
     m_miniExpandBtn->setObjectName("ctrlBtn"); m_miniExpandBtn->setFixedSize(26,26);
     m_miniExpandBtn->setIcon(Ico::expand(mc, 13)); m_miniExpandBtn->setIconSize({13,13});
     m_miniExpandBtn->setToolTip("Полный режим  F11");
 
-    // Свернуть / закрыть — без системной рамки в мини-режиме своих кнопок нет
     m_miniMinimizeBtn = new QToolButton(this);
     m_miniMinimizeBtn->setObjectName("ctrlBtn"); m_miniMinimizeBtn->setFixedSize(26,26);
     m_miniMinimizeBtn->setIcon(Ico::minimize(mc, 13)); m_miniMinimizeBtn->setIconSize({13,13});
@@ -788,7 +739,6 @@ void MainWindow::setupUi() {
     m_miniCloseBtn->setIcon(Ico::closeIcon(mc, 12)); m_miniCloseBtn->setIconSize({12,12});
     m_miniCloseBtn->setToolTip("Закрыть");
 
-    // На всю ширину экрана, прижать к верху
     m_miniDockBtn = new QToolButton(this);
     m_miniDockBtn->setObjectName("toggleBtn"); m_miniDockBtn->setFixedSize(26,26);
     m_miniDockBtn->setCheckable(true);
@@ -800,9 +750,6 @@ void MainWindow::setupUi() {
     m_miniWaveform->setMinimumWidth(80);
     m_miniWaveform->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
-    // Компактный индикатор загрузки — скрыт, пока нет активного скачивания;
-    // скрытый виджет в layout не занимает места, так что в обычном режиме
-    // мини-панель выглядит как прежде
     m_miniLoadingPanel = new QWidget(this);
     m_miniLoadingPanel->setObjectName("miniLoadingPanel");
     auto *miniLoadingLayout = new QHBoxLayout(m_miniLoadingPanel);
@@ -859,22 +806,18 @@ void MainWindow::setupUi() {
     connect(m_miniMuteBtn,    &QToolButton::clicked, this, &MainWindow::toggleMute);
     connect(m_miniVolSlider,  &QSlider::valueChanged, this, &MainWindow::setVolume);
 
-    // Мини-плеер безрамочный — эти виджеты служат "ручкой" для перетаскивания окна
     m_miniBar->installEventFilter(this);
     m_miniTitle->installEventFilter(this);
     m_miniAlbumArt->installEventFilter(this);
 
-    // ══ PLAYLIST PANEL ═══════════════════════════════════════════════════════
     m_playlistPanel = new QWidget(this);
     QVBoxLayout *plL = new QVBoxLayout(m_playlistPanel);
     plL->setContentsMargins(12, 0, 12, 10);
     plL->setSpacing(4);
 
-    // ── Tabs row ─────────────────────────────────────────────────────────────
     {
         QHBoxLayout *tabRow = new QHBoxLayout;
         tabRow->setSpacing(4);
-        // Keep the tab visibly above the rest of the playlist controls.
         tabRow->setContentsMargins(0, 0, 0, 6);
 
         m_tabBar = new QTabBar(this);
@@ -903,7 +846,6 @@ void MainWindow::setupUi() {
 
     m_playlists.append({"Плейлист 1", {}, -1});
 
-    // Header row
     QHBoxLayout *plH = new QHBoxLayout;
     m_searchEdit = new QLineEdit(this);
     m_searchEdit->setPlaceholderText("  Поиск по названию, исполнителю, альбому...");
@@ -937,7 +879,6 @@ void MainWindow::setupUi() {
     plH->addWidget(m_playlistRemoveBtn); plH->addWidget(m_playlistClearBtn);
     plL->addLayout(plH);
 
-    // List
     m_playlistWidget = new SmoothPlaylistWidget(this);
     m_playlistWidget->setObjectName("playlist");
     m_playlistWidget->setAlternatingRowColors(true);
@@ -955,7 +896,6 @@ void MainWindow::setupUi() {
     connect(m_playlistRemoveBtn, &QToolButton::clicked, this, &MainWindow::removeSelectedTracks);
     connect(m_playlistClearBtn, &QToolButton::clicked, this, &MainWindow::clearPlaylist);
 
-    // ── Transport icons ───────────────────────────────────────────────────────
     {
         const QColor ctrl(0xcd, 0xd6, 0xf4);
         const QColor play(0x1e, 0x1e, 0x2e);
@@ -972,7 +912,6 @@ void MainWindow::setupUi() {
     statusBar()->showMessage("EchoBox II  —  открой файлы или перетащи их в окно");
 }
 
-// ─── System tray ─────────────────────────────────────────────────────────────
 
 void MainWindow::setupTray() {
     const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
@@ -993,7 +932,6 @@ void MainWindow::setupTray() {
     });
 }
 
-// ─── Connections ─────────────────────────────────────────────────────────────
 
 void MainWindow::setupConnections() {
     connect(m_playPauseBtn, &QToolButton::clicked, this, &MainWindow::togglePlayPause);
@@ -1013,8 +951,6 @@ void MainWindow::setupConnections() {
         playerSeek(m_seekSlider->value());
         m_seeking = false;
     });
-    // Share peaks with the mini player only while they still belong to the
-    // currently playing source. A finished waveform is persisted separately.
     connect(m_seekSlider, &WaveformSlider::peaksReady, this,
             [this](const QUrl &url, const QVector<float> &peaks) {
         if (m_player->source() == url) m_miniWaveform->setPeaks(peaks);
@@ -1056,10 +992,6 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *ev) {
         toggleRemainingTime();
         return true;
     }
-    // Мини-плеер безрамочный (нет системного заголовка) — тащим окно за
-    // обложку/название/пустое место панели вместо системной шапки.
-    // Пока панель прижата к верху экрана (m_miniDocked) — двигать её не даём:
-    // она и так на всю ширину, случайный сдвиг мышью только мешает
     if (m_miniPlayer && !m_miniDocked && (obj == m_miniBar || obj == m_miniTitle || obj == m_miniAlbumArt)) {
         if (ev->type() == QEvent::MouseButtonPress) {
             auto *me = static_cast<QMouseEvent*>(ev);
@@ -1078,34 +1010,28 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *ev) {
     return QMainWindow::eventFilter(obj, ev);
 }
 
-// ─── Theme ───────────────────────────────────────────────────────────────────
 
 void MainWindow::applyTheme() {
-    // Compute accent color variants
     const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
     const QColor ac = theme.accent;
     const QString acH = ac.name();
-    const QString acL = ac.lighter(112).name();   // play btn hover
-    const QString acD = ac.darker(112).name();    // play btn pressed
-    // Checked bg: dark panel tinted with accent
+    const QString acL = ac.lighter(112).name();
+    const QString acD = ac.darker(112).name();
     const QColor acBg(qMax(0,ac.red()/5+0x18), qMax(0,ac.green()/5+0x14), qMax(0,ac.blue()/5+0x28));
     const QString acBgH = acBg.name();
 
-    // Font
     const int fs = m_cfg.fontSizeIdx == 0 ? 11 : m_cfg.fontSizeIdx == 2 ? 15 : 13;
     const QString family = m_cfg.fontFamily.isEmpty() ? "Segoe UI" : m_cfg.fontFamily;
     QFont appFont(family, fs);
     qApp->setFont(appFont);
 
     QString ss = R"(
-        /* ── Aurora background shows through; no global bg ── */
         QMainWindow { background: transparent; }
         QWidget {
             color: #cdd6f4;
             font-family: "FONTFAMILY", "Yu Gothic UI", sans-serif;
             font-size: FONTPX;
         }
-        /* Semi-transparent panels so aurora bleeds through */
         QWidget#topWidget {
             background-color: rgba(24, 24, 37, 215);
             border-radius: 14px;
@@ -1296,8 +1222,6 @@ void MainWindow::applyTheme() {
         }
         QSlider#volSlider::handle:horizontal:hover { background: ACCENT; }
 
-        /* Обычный (безымянный) QSlider — например полосы эквалайзера в
-           настройках — иначе рисуется нативным стилем ОС */
         QSlider::groove:vertical {
             width: 4px; background: #313244; border-radius: 2px;
         }
@@ -1331,10 +1255,6 @@ void MainWindow::applyTheme() {
         QListWidget#playlist::item:hover:!selected { background-color: #2a2b3d; }
         QListWidget#playlist::item:selected { background-color: #45475a; color: ACCENT; }
 
-        /* Без явного фона тут любой QLineEdit/QComboBox без своего ID
-           (диалоги ввода ссылки, поля путей в настройках и т.п.) остаётся
-           с нативным фоном ОС — в светлой теме Windows это белый фон,
-           а унаследованный светлый цвет текста делает его нечитаемым */
         QLineEdit {
             background-color: #181825;
             border: 1px solid #313244;
@@ -1436,7 +1356,6 @@ void MainWindow::applyTheme() {
             color: #cdd6f4;
         }
 
-        /* ── Settings dialog ── */
         QDialog        { background-color: #1e1e2e; color: #cdd6f4; }
 
         QWidget#settingsHeader {
@@ -1507,7 +1426,6 @@ void MainWindow::applyTheme() {
         QPushButton#settingsOkBtn:hover   { background-color: #d4b8f9; }
         QPushButton#settingsOkBtn:pressed { background-color: #b389f4; }
 
-        /* ── About dialog ── */
         QWidget#aboutHeader {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                 stop:0 rgba(203,166,247,45), stop:1 rgba(137,180,250,25));
@@ -1577,19 +1495,16 @@ void MainWindow::applyTheme() {
         QToolButton#helpBtn:hover { background: #45475a; color: ACCENT; border-color: ACCENT; }
     )";
 
-    // Replace the complete base palette before applying the user's accent.
     ThemeManager::applyPaletteTokens(ss, theme);
 
-    // Apply dynamic values
     ss.replace("ACCENT",    acH);
     ss.replace("#cba6f7",   acH);
-    ss.replace("#d4b8f9",   acL);   // play hover
-    ss.replace("#b389f4",   acD);   // play pressed
-    ss.replace("#2d2040",   acBgH); // toggle checked bg
+    ss.replace("#d4b8f9",   acL);
+    ss.replace("#b389f4",   acD);
+    ss.replace("#2d2040",   acBgH);
     ss.replace("FONTPX",      QString::number(fs) + "px");
     ss.replace("FONTFAMILY",  family);
 
-    // Indicator images: written to temp files once; Qt CSS file:// paths always work
     static QString s_checkUri, s_dotUri, s_dashUri;
     if (s_checkUri.isEmpty()) {
         const QString tmp = QDir::tempPath();
@@ -1620,12 +1535,10 @@ void MainWindow::applyTheme() {
     setStyleSheet(ss);
 
 
-    // Art shape — radius applied directly to pixmap in updateAlbumArt/onMetaDataChanged
     m_mediaStack->setStyleSheet(QString(
         "QWidget#mediaStack{background-color:%1;}").arg(theme.mantle.name()));
     updateAlbumArt();
 
-    // Visibility
     if (m_aurora) {
         m_aurora->setLightMode(false);
         m_aurora->setThemeColors(theme.crust.darker(112), theme.mantle,
@@ -1639,10 +1552,8 @@ void MainWindow::applyTheme() {
     }
     statusBar()->setVisible(m_cfg.showStatusBar);
 
-    // Update font size
     QFont f = font(); f.setPointSize(fs); setFont(f);
 
-    // Refresh play button icon color (contrast against accent)
     const QColor iconC = ac.lightness() > 160 ? theme.crust : QColor(0xff,0xff,0xff);
     const bool playing = m_player && m_player->playbackState() == QMediaPlayer::PlayingState;
 
@@ -1698,12 +1609,9 @@ void MainWindow::applyTheme() {
     setVolume(m_volumeSlider->value());
     updateRepeatButton();
 
-    // Repaint playlist viewport so item icons remain visible after stylesheet change
     if (g_delegate) g_delegate->setTheme(theme);
     if (m_playlistWidget) m_playlistWidget->viewport()->update();
 
-    // The selected application icon has its own palette and therefore stays
-    // unchanged when only the interface theme changes.
     const QIcon appIcon(createLogo(128, ThemeManager::palette("mocha"), m_cfg.appIconStyle));
     qApp->setWindowIcon(appIcon);
     setWindowIcon(appIcon);
@@ -1773,7 +1681,6 @@ void MainWindow::syncShellShortcutIcon() {
     if (shouldUninitialize) CoUninitialize();
 }
 
-// ─── Settings ────────────────────────────────────────────────────────────────
 
 void MainWindow::loadSettings() {
     restoreGeometry(m_settings.value("geometry").toByteArray());
@@ -1796,14 +1703,12 @@ void MainWindow::loadSettings() {
     m_recentFiles = m_settings.value("recentFiles").toStringList();
     refreshRecentMenu();
 
-    // Load AppSettings
     m_cfg.theme          = m_settings.value("cfg/theme", "mocha").toString();
     m_cfg.accentColor    = QColor(m_settings.value("cfg/accentColor", "#cba6f7").toString());
     if (!m_cfg.accentColor.isValid()) m_cfg.accentColor = QColor(0xcb,0xa6,0xf7);
     m_cfg.fontSizeIdx    = m_settings.value("cfg/fontSizeIdx", 1).toInt();
     m_cfg.fontFamily     = m_settings.value("cfg/fontFamily",  "").toString();
     m_cfg.fontFilePath   = m_settings.value("cfg/fontFilePath","").toString();
-    // Re-load custom font file so the family name is available
     if (!m_cfg.fontFilePath.isEmpty())
         QFontDatabase::addApplicationFont(m_cfg.fontFilePath);
     m_cfg.artShape       = m_settings.value("cfg/artShape", "rounded").toString();
@@ -1829,9 +1734,6 @@ void MainWindow::loadSettings() {
     m_cfg.eqEnabled        = m_settings.value("cfg/eqEnabled", false).toBool();
     for (int i = 0; i < kEqBandCount; ++i)
         m_cfg.eqBands[i] = m_settings.value(QString("cfg/eqBand%1").arg(i), 0.0).toFloat();
-    // Автозапуск — единственный источник истины это сам реестр (не дублируем
-    // в QSettings), иначе они могут разойтись, если юзер отключит его вручную
-    // через диспетчер задач/параметры Windows
     m_cfg.launchOnStartup  = isLaunchOnStartupEnabled();
 
     const bool alwaysOnTop = m_settings.value("view/alwaysOnTop", false).toBool();
@@ -1885,14 +1787,11 @@ void MainWindow::saveSettings() {
                         windowFlags().testFlag(Qt::WindowStaysOnTopHint));
     for (int i = 0; i < kEqBandCount; ++i)
         m_settings.setValue(QString("cfg/eqBand%1").arg(i), m_cfg.eqBands[i]);
-    // launchOnStartup не хранится в QSettings — источник истины реестр,
-    // применяется явно в openSettings() при нажатии "Сохранить"
 
     savePlaylistsToFile();
     saveStreamTracksToFile();
 }
 
-// ─── File operations ─────────────────────────────────────────────────────────
 
 void MainWindow::openFiles() {
     const QString defaultDir = m_cfg.libraryFolder.isEmpty()
@@ -1989,7 +1888,6 @@ void MainWindow::refreshRecentMenu() {
     });
 }
 
-// ─── Playlist management ─────────────────────────────────────────────────────
 
 void MainWindow::addFiles(const QList<QUrl> &urls) {
     bool wasEmpty = m_playlist.isEmpty();
@@ -2070,7 +1968,6 @@ void MainWindow::removeSelectedTracks() {
         m_playlist.removeAll(url);
         delete item;
     }
-    // renumber
     for (int i = 0; i < m_playlistWidget->count(); ++i) {
         QListWidgetItem *it = m_playlistWidget->item(i);
         const QUrl u = it->data(Qt::UserRole).value<QUrl>();
@@ -2090,7 +1987,7 @@ void MainWindow::copySelectedTracksToPlaylist(int targetIndex) {
     int added = 0;
     for (QListWidgetItem *item : sel) {
         const QUrl url = item->data(Qt::UserRole).value<QUrl>();
-        if (target.tracks.contains(url)) continue;   // не плодим дубликаты
+        if (target.tracks.contains(url)) continue;
         target.tracks.append(url);
         ++added;
     }
@@ -2112,8 +2009,6 @@ void MainWindow::moveSelectedTracksToPlaylist(int targetIndex) {
         if (!target.tracks.contains(url)) { target.tracks.append(url); ++moved; }
     }
 
-    // Убираем из текущего плейлиста — та же механика, что и в
-    // removeSelectedTracks(), но без диалога: перенос — не потеря треков
     for (QListWidgetItem *item : sel) {
         const QUrl url = item->data(Qt::UserRole).value<QUrl>();
         m_playlist.removeAll(url);
@@ -2191,9 +2086,6 @@ void MainWindow::onSearchChanged(const QString &text) {
                     break;
                 }
             }
-            // The custom playlist delegate ignores QListWidgetItem foreground
-            // colors, so the old "dim unmatched rows" approach had no visible
-            // effect. A search now behaves as an actual filter.
             it->setHidden(!hit);
             if (hit) ++matches;
         }
@@ -2238,16 +2130,13 @@ void MainWindow::onPlaylistContextMenu(const QPoint &pos) {
             if (full.isNull()) return;
             QString iconFile = trackIconPath(itemUrl);
             QDir().mkpath(QFileInfo(iconFile).absolutePath());
-            // Save full-size (capped at 512px) — used for album art display
             const QPixmap large = (full.width() > 512 || full.height() > 512)
                 ? full.scaled(512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation)
                 : full;
             large.save(iconFile, "PNG");
-            // Scale down only for the small playlist icon
             const QPixmap thumb = full.scaled(36, 36, Qt::KeepAspectRatioByExpanding,
                                               Qt::SmoothTransformation).copy(0, 0, 36, 36);
             item->setIcon(QIcon(thumb));
-            // If this is the currently playing track, update the album art display too
             if (m_currentIndex >= 0 && m_playlist.value(m_currentIndex) == itemUrl) {
                 m_coverPixmap = full;
                 updateAlbumArt();
@@ -2300,7 +2189,6 @@ void MainWindow::onPlaylistContextMenu(const QPoint &pos) {
         updatePlaylistInfo();
         updateDuplicateHighlights();
     });
-    // Show grayed out if there are no duplicates
     bool hasDups = false;
     for (int i = 0; i < m_playlistWidget->count(); ++i)
         if (m_playlistWidget->item(i)->data(Qt::UserRole + 10).toBool()) { hasDups = true; break; }
@@ -2314,15 +2202,12 @@ void MainWindow::updatePlaylistInfo() {
         n == 1 ? "" : (n < 5 ? "а" : "ов")));
 }
 
-// ─── Playback ────────────────────────────────────────────────────────────────
 
 void MainWindow::playTrack(int index) {
     if (index < 0 || index >= m_playlist.size()) return;
 
-    // Сохранить позицию предыдущего трека
     saveTrackPosition();
 
-    // Кроссфейд — если фейдим, начинаем с нуля и плавно поднимаем
     const bool wasCrossfading = m_crossfading;
     m_crossfading = false;
     if (wasCrossfading && m_cfg.crossfadeSecs > 0) {
@@ -2336,9 +2221,6 @@ void MainWindow::playTrack(int index) {
     const QUrl url = m_playlist[index];
     resetWaveformUi();
 
-    // Сразу сбрасываем обложку предыдущего трека. У видео метаданные и
-    // thumbnail приходят асинхронно; без этого мини-плеер успевал оставить
-    // картинку от предыдущего аудиофайла (особенно заметно на MP4).
     m_coverPixmap = QPixmap();
     updateAlbumArt();
 
@@ -2358,10 +2240,7 @@ void MainWindow::playTrack(int index) {
     fadeInWidget(m_miniTitle, 280);
 
     if (!url.isLocalFile()) {
-        // Ссылка на музыку (SoundCloud/YouTube/др.) — сначала получить
-        // прямой аудиопоток, реальный setSource() произойдёт асинхронно
         statusBar()->showMessage("Получение потока: " + name + " …");
-        // Обложка могла быть скачана и закэширована при прошлом воспроизведении
         const QString icoFile = trackIconPath(url);
         m_coverPixmap = QFile::exists(icoFile) ? QPixmap(icoFile) : QPixmap();
         m_mediaStack->setCurrentWidget(m_albumArt);
@@ -2381,7 +2260,6 @@ void MainWindow::playTrack(int index) {
     if (isVideoFile(url))
         m_mediaStack->setCurrentWidget(m_videoWidget);
     else {
-        // Load cached icon file as album art fallback (manual or scanned)
         const QString icoFile = trackIconPath(url);
         m_coverPixmap = QFile::exists(icoFile) ? QPixmap(icoFile) : QPixmap();
         m_mediaStack->setCurrentWidget(m_albumArt);
@@ -2391,22 +2269,10 @@ void MainWindow::playTrack(int index) {
 
     addRecentFile(url.toLocalFile());
 
-    // Discord Rich Presence
     if (m_discord && m_cfg.discordEnabled)
         m_discord->updateActivity(m_titleLabel->text(), m_artistLabel->text());
 }
 
-// ─── Ссылки на музыку (SoundCloud/YouTube/др. через yt-dlp, прямые URL) ───────
-//
-// Плейлист хранит ИСХОДНУЮ ссылку пользователя как QUrl (стабильный ключ —
-// сохраняется в плейлисты/M3U, участвует в поиске дублей). Для ссылок,
-// которые требуют yt-dlp (SoundCloud/YouTube/др.), трек СКАЧИВАЕТСЯ целиком
-// на диск перед воспроизведением и дальше играется как обычный локальный
-// файл — тот же путь, что уже надёжно работает для остальной библиотеки.
-// Отдавать плееру напрямую подписанный CDN-адрес ненадёжно: он собран из
-// HLS-сегментов и/или требует специфичных HTTP-заголовков (например,
-// googlevideo.com у YouTube без верного User-Agent отвечает 403) — а такое
-// умеет только сам yt-dlp, не QMediaPlayer.
 
 QString MainWindow::ytDlpPath() const {
     const QString bundled = QCoreApplication::applicationDirPath() + "/yt-dlp.exe";
@@ -2470,9 +2336,6 @@ void MainWindow::openStreamUrl(const QString &link) {
         return;
     }
 
-    // Яндекс.Музыка блокирует такие запросы как автоматические (бот-защита) —
-    // без реальной авторизации в браузере это не открывается в принципе,
-    // так что честнее сразу сказать об этом, чем гонять через долгую попытку
     if (url.host().contains("music.yandex.", Qt::CaseInsensitive)) {
         QMessageBox::warning(this, "Не поддерживается",
             "Яндекс.Музыка не поддерживается: сервис блокирует такие запросы "
@@ -2495,7 +2358,7 @@ void MainWindow::openStreamUrl(const QString &link) {
         m_streamResolving.remove(url);
         updateStreamPlaceholder(url, ok, localPath, title, artist, thumb, errorMsg);
         if (shouldAutoplay && ok) {
-            playTrack(index);   // playTrack сам обновит баннер на этап воспроизведения
+            playTrack(index);
         } else {
             hideLoadingBanner();
             if (shouldAutoplay)
@@ -2600,7 +2463,6 @@ void MainWindow::fetchStreamThumbnail(const QUrl &pageUrl, const QString &thumbn
 
     const QString icoFile = trackIconPath(pageUrl);
     if (QFile::exists(icoFile)) {
-        // Уже закэшировано с прошлого раза — просто применить
         const int idx = m_playlist.indexOf(pageUrl);
         if (idx < 0) return;
         if (m_cfg.showTrackIcons) {
@@ -2624,7 +2486,6 @@ void MainWindow::fetchStreamThumbnail(const QUrl &pageUrl, const QString &thumbn
         if (!pm.loadFromData(reply->readAll())) return;
 
         QDir().mkpath(QFileInfo(icoFile).absolutePath());
-        // Полноразмерная обложка (до 512px) — для показа в плеере
         const QPixmap large = (pm.width() > 512 || pm.height() > 512)
             ? pm.scaled(512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation)
             : pm;
@@ -2657,14 +2518,8 @@ void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
     auto *proc = new QProcess(this);
     QStringList args = {
         "--no-playlist", "--no-warnings", "--no-progress",
-        // android/web-фоллбэк обходит текущий SABR-эксперимент YouTube, из-за
-        // которого чистый audio-only формат недоступен для скачивания — для
-        // других сайтов (SoundCloud и т.п.) этот youtube-специфичный аргумент
-        // просто игнорируется
         "--extractor-args", "youtube:player_client=android,web",
     };
-    // Некоторые сайты (Яндекс.Музыка и т.п.) отдают музыку только вошедшим —
-    // берём куки из браузера пользователя, если это настроено
     if (!m_cfg.ytDlpCookiesBrowser.isEmpty())
         args << "--cookies-from-browser" << m_cfg.ytDlpCookiesBrowser;
     QString format = "bestaudio/best";
@@ -2696,8 +2551,6 @@ void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
         [this, proc, pageUrl, hash, cacheDir, callback](int exitCode, QProcess::ExitStatus exitStatus) {
             proc->deleteLater();
             if (exitStatus != QProcess::NormalExit || exitCode != 0) {
-                // Последняя непустая строка stderr обычно и есть суть ошибки
-                // ("ERROR: ..." от yt-dlp) — показываем как есть, без домыслов
                 const QStringList errLines = QString::fromUtf8(proc->readAllStandardError())
                     .split('\n', Qt::SkipEmptyParts);
                 const QString lastErr = errLines.isEmpty() ? QString() : errLines.last().trimmed();
@@ -2708,7 +2561,6 @@ void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
                 return;
             }
 
-            // Файл сохранён yt-dlp сам под расширением, которое выбрало (webm/m4a/opus/…)
             QDir dir(cacheDir);
             const QStringList found = dir.entryList({hash + ".*"}, QDir::Files);
             if (found.isEmpty()) {
@@ -2718,8 +2570,6 @@ void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
             }
             const QString localPath = dir.filePath(found.first());
 
-            // --print-json печатает метаданные одной JSON-строкой в stdout уже
-            // после скачивания — берём последнюю валидную JSON-строку
             const QList<QByteArray> lines = proc->readAllStandardOutput().split('\n');
             QJsonObject obj;
             for (auto it = lines.crbegin(); it != lines.crend(); ++it) {
@@ -2751,8 +2601,6 @@ void MainWindow::beginStreamPlayback(int index, const QUrl &pageUrl) {
         return;
     }
 
-    // Защита от гонки: если пользователь повторно жмёт play/трек, пока трек ещё
-    // скачивается, не запускать второй параллельный процесс yt-dlp на тот же трек
     if (m_streamResolving.contains(pageUrl)) return;
     m_streamResolving.insert(pageUrl);
 
@@ -2766,7 +2614,6 @@ void MainWindow::beginStreamPlayback(int index, const QUrl &pageUrl) {
             showCopyableError("Не удалось скачать трек", errorMsg);
             return;
         }
-        // Пользователь мог переключиться на другой трек, пока шло скачивание
         if (m_currentIndex != index || m_playlist.value(index) != pageUrl) { hideLoadingBanner(); return; }
         commitStreamPlayback(index, pageUrl, QUrl::fromLocalFile(localPath));
     });
@@ -2803,10 +2650,6 @@ void MainWindow::togglePlayPause() {
         if (m_eqActive) m_eqEngine->play();
     } else if (m_currentIndex >= 0 && m_currentIndex < m_playlist.size()
                && !m_player->source().isEmpty()) {
-        // Stop keeps the current media loaded. Reuse it instead of calling
-        // playTrack(), which clears the already prepared waveform. Qt does not
-        // guarantee another durationChanged signal for the same source, so the
-        // cleared waveform could otherwise remain empty.
         playerSeek(0);
         m_player->play();
         syncEqEngineToCurrentTrack();
@@ -2825,13 +2668,12 @@ void MainWindow::previous() {
     popButtonIcon(m_prevBtn);
     if (m_playlist.isEmpty()) return;
     int prevIdx = m_currentIndex - 1;
-    if (prevIdx < 0) prevIdx = m_playlist.size() - 1; // always wrap on manual press
+    if (prevIdx < 0) prevIdx = m_playlist.size() - 1;
     playTrack(prevIdx);
 }
 
 void MainWindow::next() {
     popButtonIcon(m_nextBtn);
-    // Manual next: always advance (wrap around, no stop)
     if (m_playlist.isEmpty()) return;
     if (m_repeat == RepeatMode::One) { playNext(false); return; }
     int nextIdx;
@@ -2843,7 +2685,7 @@ void MainWindow::next() {
         }
     } else {
         nextIdx = m_currentIndex + 1;
-        if (nextIdx >= m_playlist.size()) nextIdx = 0; // always wrap on manual press
+        if (nextIdx >= m_playlist.size()) nextIdx = 0;
     }
     playTrack(nextIdx);
 }
@@ -2885,7 +2727,6 @@ void MainWindow::setVolume(int v) {
     const QColor vc = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor).text;
     m_muteBtn->setIcon(Ico::volume(level, vc, 22));
     if (m_miniMuteBtn)   m_miniMuteBtn->setIcon(Ico::volume(level, vc, 18));
-    // Синхронизация слайдеров без рекурсии
     auto sync = [](QSlider *s, int val){
         if (s && s->value() != val) { s->blockSignals(true); s->setValue(val); s->blockSignals(false); }
     };
@@ -3004,8 +2845,6 @@ void MainWindow::toggleMiniPlayer() {
             }
         }
 
-        // Relax constraints while the window itself morphs between the full
-        // player and the 52 px mini bar.
         setMinimumSize(0, 0);
         setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
         setWindowFlag(Qt::FramelessWindowHint, m_miniPlayer);
@@ -3101,7 +2940,6 @@ void MainWindow::toggleRemainingTime() {
     updateTimeDisplay(m_player->position(), m_player->duration());
 }
 
-// ─── Player signal handlers ──────────────────────────────────────────────────
 
 void MainWindow::onDurationChanged(qint64 duration) {
     m_seekSlider->setRange(0, static_cast<int>(duration));
@@ -3118,7 +2956,6 @@ void MainWindow::onDurationChanged(qint64 duration) {
     }
     updateTimeDisplay(m_player->position(), duration);
 
-    // Store duration in list item
     if (m_currentIndex >= 0 && m_currentIndex < m_playlistWidget->count()) {
         QListWidgetItem *it = m_playlistWidget->item(m_currentIndex);
         if (it) it->setData(Qt::UserRole + 1, formatTime(duration));
@@ -3153,7 +2990,6 @@ void MainWindow::onPositionChanged(qint64 position) {
     }
     updateTimeDisplay(position, m_player->duration());
 
-    // Crossfade fade-out
     if (m_cfg.crossfadeSecs > 0 && !m_fadeInTimer->isActive()) {
         const qint64 dur = m_player->duration();
         if (dur > 0) {
@@ -3190,9 +3026,8 @@ void MainWindow::onPlaybackStateChanged(QMediaPlayer::PlaybackState state) {
 void MainWindow::onMediaStatusChanged(QMediaPlayer::MediaStatus status) {
     if (status == QMediaPlayer::EndOfMedia) {
         saveTrackPosition();
-        nextAuto(); // respects repeat mode; manual next() always wraps
+        nextAuto();
     }
-    // Восстановление позиции (Feature 8)
     if (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::BufferedMedia) {
         if (m_currentIndex >= 0 && m_currentIndex < m_playlist.size()) {
             const QVariant saved = m_settings.value(positionKey(m_playlist[m_currentIndex]));
@@ -3208,7 +3043,7 @@ void MainWindow::onMediaStatusChanged(QMediaPlayer::MediaStatus status) {
     }
 }
 
-static QPixmap applyRoundedCorners(const QPixmap &src, int sz, int radius); // defined below in Visuals
+static QPixmap applyRoundedCorners(const QPixmap &src, int sz, int radius);
 
 void MainWindow::onMetaDataChanged() {
     const QMediaMetaData meta = m_player->metaData();
@@ -3227,7 +3062,6 @@ void MainWindow::onMetaDataChanged() {
     if (!artist.isEmpty()) m_artistLabel->setText(artist);
     if (!album.isEmpty())  m_albumLabel->setText(album);
 
-    // Store metadata on the current playlist item for smart search
     if (m_currentIndex >= 0 && m_currentIndex < m_playlistWidget->count()) {
         QListWidgetItem *it = m_playlistWidget->item(m_currentIndex);
         if (it) {
@@ -3239,11 +3073,9 @@ void MainWindow::onMetaDataChanged() {
     if (!m_searchEdit->text().trimmed().isEmpty())
         onSearchChanged(m_searchEdit->text());
 
-    // Обновить Discord с реальным названием из тегов
     if (m_discord && m_cfg.discordEnabled && m_player->playbackState() == QMediaPlayer::PlayingState)
         m_discord->updateActivity(m_titleLabel->text(), m_artistLabel->text());
 
-    // Album art from metadata
     QImage img = meta.value(QMediaMetaData::CoverArtImage).value<QImage>();
     if (img.isNull()) img = meta.value(QMediaMetaData::ThumbnailImage).value<QImage>();
     if (!img.isNull()) {
@@ -3253,18 +3085,14 @@ void MainWindow::onMetaDataChanged() {
         const bool currentIsVideo = m_currentIndex >= 0
             && m_currentIndex < m_playlist.size()
             && isVideoFile(m_playlist[m_currentIndex]);
-        // Thumbnail видео нужен мини-плееру и иконке списка, но основное
-        // окно должно продолжать показывать само видео.
         if (!currentIsVideo)
             m_mediaStack->setCurrentWidget(m_albumArt);
 
-        // Immediately set track icon for the currently playing track
         if (m_currentIndex >= 0 && m_currentIndex < m_playlist.size()) {
             const QUrl &url       = m_playlist[m_currentIndex];
             const QString icoFile = trackIconPath(url);
             if (!QFile::exists(icoFile)) {
                 QDir().mkpath(QFileInfo(icoFile).absolutePath());
-                // Save full-size cover (capped at 512px) for sharp album art
                 const QPixmap large = (m_coverPixmap.width() > 512 || m_coverPixmap.height() > 512)
                     ? m_coverPixmap.scaled(512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation)
                     : m_coverPixmap;
@@ -3289,7 +3117,6 @@ void MainWindow::onError(QMediaPlayer::Error /*e*/, const QString &msg) {
 void MainWindow::onAudioBuffer(const QAudioBuffer &buffer) {
     m_visualizer->feedAudioBuffer(buffer);
 
-    // Compute RMS amplitude and feed aurora background
     if (m_aurora) {
         const float *data  = buffer.constData<float>();
         const int    total = buffer.frameCount() * buffer.format().channelCount();
@@ -3298,12 +3125,10 @@ void MainWindow::onAudioBuffer(const QAudioBuffer &buffer) {
         if (total > 0) m_aurora->setAmplitude(std::sqrt(rms / total));
     }
 
-    // Push music into the APO ring so it gets mixed into the microphone
     if (m_micRouting && m_apoRing)
         apoFeed(buffer);
 }
 
-// ─── Visuals ─────────────────────────────────────────────────────────────────
 
 static QPixmap applyRoundedCorners(const QPixmap &src, int sz, int radius) {
     QPixmap dst(sz, sz);
@@ -3324,10 +3149,9 @@ static QPixmap applyRoundedCorners(const QPixmap &src, int sz, int radius) {
 int MainWindow::artRadius() const {
     if (m_cfg.artShape == "square") return 0;
     if (m_cfg.artShape == "circle") return 115;
-    return 12; // rounded (default)
+    return 12;
 }
 
-// ─── Плавные переходы — общие хелперы ────────────────────────────────────────
 
 void MainWindow::fadeInWidget(QWidget *w, int durationMs) {
     if (!w) return;
@@ -3338,8 +3162,6 @@ void MainWindow::fadeInWidget(QWidget *w, int durationMs) {
     anim->setStartValue(0.0);
     anim->setEndValue(1.0);
     anim->setEasingCurve(QEasingCurve::OutCubic);
-    // Снимаем эффект по завершении — постоянный QGraphicsOpacityEffect
-    // заставляет Qt рендерить весь поддерево программно каждый кадр
     connect(anim, &QPropertyAnimation::finished, w, [w]{ w->setGraphicsEffect(nullptr); });
     anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
@@ -3368,10 +3190,8 @@ void MainWindow::showLoadingBanner(const QString &text) {
     m_miniLoadingPercent->setText(QString::fromUtf8("•••"));
     m_miniLoadingPanel->setVisible(true);
     m_miniLoadingPanel->setToolTip(text);
-    // Отменяем незавершённый fade (в т.ч. fade-out от предыдущего hide) —
-    // иначе его finished-колбэк потом спрячет баннер, который мы только что показали
     if (m_loadingAnim) { m_loadingAnim->stop(); m_loadingAnim = nullptr; }
-    if (m_loadingBanner->isVisible()) return;   // уже видим — просто обновили текст выше
+    if (m_loadingBanner->isVisible()) return;
 
     m_loadingBanner->setVisible(true);
     auto *effect = new QGraphicsOpacityEffect(m_loadingBanner);
@@ -3440,8 +3260,6 @@ void MainWindow::hideLoadingBanner() {
     anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
-// Распознаёт частые причины по тексту ошибки yt-dlp/сети и подсказывает,
-// что с этим делать — вместо того чтобы просто показать сырой текст
 static QString suggestFixForError(const QString &errorMsg) {
     const QString e = errorMsg.toLower();
     if (e.contains("dpapi") || e.contains("failed to decrypt")) {
@@ -3472,7 +3290,7 @@ static QString suggestFixForError(const QString &errorMsg) {
                "заблокирован в твоём регионе.";
     }
     if (e.contains("antivirus") || e.contains("не найден или не может быть запущен")) {
-        return "";  // это сообщение уже содержит собственную подсказку про антивирус
+        return "";
     }
     return QString();
 }
@@ -3495,11 +3313,6 @@ void MainWindow::showCopyableError(const QString &title, const QString &message)
 void MainWindow::popButtonIcon(QToolButton *btn) {
     if (!btn) return;
 
-    // Если предыдущий pop этой же кнопки ещё не доиграл (например несколько
-    // сигналов подряд при смене трека), btn->iconSize() сейчас — промежуточное,
-    // ещё не выросшее значение. Взять его за "нормальный" размер значило бы
-    // навсегда застрять на нём — берём endValue() бегущей анимации вместо
-    // текущего iconSize(), он всегда верный
     auto *prevAnim = qobject_cast<QPropertyAnimation*>(
         btn->property("popAnim").value<QObject*>());
     const QSize normal = prevAnim ? prevAnim->endValue().toSize() : btn->iconSize();
@@ -3524,8 +3337,6 @@ void MainWindow::animateTrackHighlight(const QUrl &url) {
     anim->setStartValue(theme.text);
     anim->setEndValue(theme.accent);
     anim->setEasingCurve(QEasingCurve::OutCubic);
-    // Ищем элемент заново на каждый тик (а не храним QListWidgetItem*) —
-    // плейлист мог измениться, пока анимация ещё бежит
     connect(anim, &QVariantAnimation::valueChanged, this, [this, url](const QVariant &v) {
         const int idx = m_playlist.indexOf(url);
         if (idx < 0) return;
@@ -3552,8 +3363,6 @@ void MainWindow::updateAlbumArt() {
     g.setColorAt(1.0, theme.mantle);
     p.setBrush(g); p.setPen(Qt::NoPen);
     p.drawRoundedRect(0, 0, 230, 230, r, r);
-    // Keep the placeholder subdued without semi-transparent overlapping
-    // strokes, which made the note look striped/ringed on some themes.
     const QColor noteColor = theme.accent.darker(128);
     Ico::music(noteColor, 96).paint(&p, QRect(67, 67, 96, 96), Qt::AlignCenter);
     m_albumArt->setPixmap(pm);
@@ -3567,7 +3376,6 @@ void MainWindow::setCurrentTrackVisual(int index) {
         QFont f = it->font(); f.setBold(i == index); it->setFont(f);
         if (i != index) it->setForeground(theme.text);
     }
-    // Плавный переход цвета — только для новой активной строки
     if (index >= 0 && index < m_playlist.size())
         animateTrackHighlight(m_playlist[index]);
     m_playlistWidget->scrollToItem(m_playlistWidget->item(index));
@@ -3581,7 +3389,6 @@ void MainWindow::updateTimeDisplay(qint64 pos, qint64 dur) {
     }
 }
 
-// ─── About ───────────────────────────────────────────────────────────────────
 
 void MainWindow::showAbout() {
     QDialog dlg(this);
@@ -3593,7 +3400,6 @@ void MainWindow::showAbout() {
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // ── Header: логотип, название, версия ─────────────────────────────────
     auto *header = new QWidget(&dlg);
     header->setObjectName("aboutHeader");
     auto *headerL = new QVBoxLayout(header);
@@ -3617,7 +3423,6 @@ void MainWindow::showAbout() {
 
     root->addWidget(header);
 
-    // ── Body ────────────────────────────────────────────────────────────────
     auto *body = new QWidget(&dlg);
     auto *bodyL = new QVBoxLayout(body);
     bodyL->setContentsMargins(30, 22, 30, 18);
@@ -3688,7 +3493,6 @@ void MainWindow::showAbout() {
 
     root->addWidget(body);
 
-    // ── Footer ──────────────────────────────────────────────────────────────
     auto *footer = new QWidget(&dlg);
     footer->setObjectName("aboutFooter");
     auto *footerL = new QHBoxLayout(footer);
@@ -3703,7 +3507,6 @@ void MainWindow::showAbout() {
     footerL->addStretch();
     root->addWidget(footer);
 
-    // Плавное появление — как у диалога настроек
     dlg.setWindowOpacity(0.0);
     auto *fadeAnim = new QPropertyAnimation(&dlg, "windowOpacity", &dlg);
     fadeAnim->setDuration(320);
@@ -3715,7 +3518,6 @@ void MainWindow::showAbout() {
     dlg.exec();
 }
 
-// ─── Обновления ──────────────────────────────────────────────────────────────
 
 static QVector<int> parseVersionNumbers(QString v) {
     if (v.startsWith('v', Qt::CaseInsensitive)) v.remove(0, 1);
@@ -3728,8 +3530,6 @@ static QVector<int> parseVersionNumbers(QString v) {
     return nums;
 }
 
-// true, если remote строго новее local (числа сравниваются по семверу;
-// при равных числах релиз без "-beta"/"-rc" и т.п. считается новее)
 static bool isNewerVersion(const QString &remote, const QString &local) {
     const QVector<int> r = parseVersionNumbers(remote);
     const QVector<int> l = parseVersionNumbers(local);
@@ -3788,8 +3588,6 @@ void MainWindow::checkForUpdates(bool manual) {
             return;
         }
 
-        // Общий список содержит и pre-release-теги — ищем среди них
-        // самый новый по номеру версии, а не просто первый в ответе
         const QJsonArray releases = QJsonDocument::fromJson(reply->readAll()).array();
         QJsonObject newest;
         QString tag;
@@ -3812,14 +3610,9 @@ void MainWindow::checkForUpdates(bool manual) {
             return;
         }
 
-        // При фоновой (не ручной) проверке не спамим одним и тем же
-        // релизом повторно, если пользователь уже его закрыл разок
         const QString skipKey = "update/skippedVersion";
         if (!manual && m_settings.value(skipKey).toString() == tag) return;
 
-        // Установленную версию обновляем через Inno Setup: он сохраняет
-        // каталог установки и заново создаёт ярлыки. Portable-сборку
-        // по-прежнему обновляем ZIP-архивом на месте.
         if (!isSafeReleaseTag(tag)) {
             if (manual)
                 statusBar()->showMessage("GitHub вернул небезопасный номер версии", 6000);
@@ -3962,9 +3755,6 @@ void MainWindow::checkForUpdates(bool manual) {
             ? QString()
             : QString("[Полный список изменений](%1)").arg(changelogUrl);
 
-        // GitHub generated notes may contain only a compare link. In that
-        // case obtain the actual commits and build a useful list instead of
-        // showing an almost empty box.
         QString detailProbe = notes;
         detailProbe.remove(fullChangelogPattern);
         const bool needsCommitList = detailProbe.trimmed().isEmpty();
@@ -4268,8 +4058,6 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
         updateLoadingText("Распаковка обновления " + tag + "…");
         setLoadingProgress(-1);
 
-        // Inspect every archive path before extraction. Even a correctly
-        // hashed archive must never be allowed to write outside our TEMP dir.
         QProcess listProc;
         listProc.start("tar", {"-tf", QDir::toNativeSeparators(zipPath)});
         listProc.waitForFinished(30000);
@@ -4294,8 +4082,6 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
             return;
         }
 
-        // Windows 10/11 includes bsdtar. Using it avoids script execution and
-        // keeps the portable update path transparent to security software.
         QProcess extractProc;
         extractProc.start("tar", {"-xf", QDir::toNativeSeparators(zipPath),
                                    "-C", QDir::toNativeSeparators(extractDir)});
@@ -4346,7 +4132,6 @@ void MainWindow::downloadAndInstallUpdate(const QString &assetUrl, const QString
     });
 }
 
-// ─── Drag & Drop ─────────────────────────────────────────────────────────────
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *e) {
     if (e->mimeData()->hasUrls()) e->acceptProposedAction();
@@ -4361,7 +4146,6 @@ void MainWindow::dropEvent(QDropEvent *e) {
     addFiles(localUrls);
 }
 
-// ─── Keyboard ────────────────────────────────────────────────────────────────
 
 void MainWindow::keyPressEvent(QKeyEvent *e) {
     const bool ctrl  = e->modifiers() & Qt::ControlModifier;
@@ -4397,7 +4181,6 @@ void MainWindow::keyPressEvent(QKeyEvent *e) {
     }
 }
 
-// ─── Close → tray ────────────────────────────────────────────────────────────
 
 void MainWindow::closeEvent(QCloseEvent *e) {
     saveTrackPosition();
@@ -4413,7 +4196,6 @@ void MainWindow::closeEvent(QCloseEvent *e) {
     }
 }
 
-// ─── Multi-playlist ──────────────────────────────────────────────────────────
 
 void MainWindow::saveCurrentPlaylistState() {
     if (m_activePl < 0 || m_activePl >= m_playlists.size()) return;
@@ -4449,7 +4231,6 @@ void MainWindow::loadPlaylistState(int index) {
     m_coverPixmap = QPixmap();
     updateAlbumArt();
 
-    // Scan for missing track icons in the background (local files only)
     QList<QUrl> noIcon;
     for (const QUrl &u : m_playlist)
         if (u.isLocalFile() && !QFile::exists(trackIconPath(u)))
@@ -4527,14 +4308,10 @@ void MainWindow::deletePlaylist(int index) {
     loadPlaylistState(m_activePl);
 }
 
-// ─── Volume helper ───────────────────────────────────────────────────────────
 
 void MainWindow::applyVolume() {
     const float vol = m_volumeSlider->value() / 100.0f * m_fadeFactor;
     if (m_eqActive) {
-        // Обычный плеер продолжает "играть" неслышно — он всё ещё источник
-        // истины для позиции/длительности/кроссфейда; слышимый звук идёт
-        // из AudioEngine (см. syncEqEngineToCurrentTrack)
         m_audioOutput->setVolume(0.0f);
         m_eqEngine->setVolume(vol);
     } else {
@@ -4572,11 +4349,8 @@ void MainWindow::syncEqEngineToCurrentTrack() {
         return;
     }
 
-    // При повторном применении настроек не запускаем декодирование заново.
     if (m_eqSource == src && (m_eqActive || m_eqPending)) return;
 
-    // Пока новый трек декодируется, обычный QMediaPlayer остаётся слышимым.
-    // Это исключает тишину на неподдерживаемых/повреждённых файлах.
     stopEqEngine();
     m_eqSource = src;
     m_eqPending = true;
@@ -4584,7 +4358,6 @@ void MainWindow::syncEqEngineToCurrentTrack() {
     m_eqEngine->setSource(src);
 }
 
-// ─── Position memory (Feature 8) ─────────────────────────────────────────────
 
 QString MainWindow::positionKey(const QUrl &url) const {
     return "pos/" + QString::number(qHash(url.toString()));
@@ -4601,7 +4374,6 @@ void MainWindow::saveTrackPosition() {
         m_settings.remove(positionKey(url));
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 bool MainWindow::isVideoFile(const QUrl &url) const {
     return VIDEO_EXTS.contains(QFileInfo(url.toLocalFile()).suffix().toLower());
@@ -4618,12 +4390,11 @@ QString MainWindow::formatTime(qint64 ms) {
     return QString("%1:%2").arg(min).arg(sec, 2, 10, QChar('0'));
 }
 
-// ─── Background metadata / icon scanner ──────────────────────────────────────
 
 void MainWindow::scheduleScan(const QList<QUrl> &urls) {
     for (const QUrl &u : urls)
         if (!m_metaScanQueue.contains(u))
-            m_metaScanQueue.append(u);  // always scan — reads metadata for smart search
+            m_metaScanQueue.append(u);
     if (!m_scanInProgress && !m_metaScanQueue.isEmpty())
         advanceMetaScan();
 }
@@ -4647,7 +4418,6 @@ void MainWindow::handleMetaReaderUpdate() {
                         s == QMediaPlayer::NoMedia);
     if (!ready) return;
 
-    // Store title / artist / album on the playlist item for smart search
     const int idx = m_playlist.indexOf(url);
     if (idx >= 0) {
         QListWidgetItem *item = m_playlistWidget->item(idx);
@@ -4663,7 +4433,6 @@ void MainWindow::handleMetaReaderUpdate() {
         }
     }
 
-    // Save cover art icon if not cached yet
     const QString icoFile = trackIconPath(url);
     if (!QFile::exists(icoFile)) {
         QImage img = meta.value(QMediaMetaData::CoverArtImage).value<QImage>();
@@ -4671,7 +4440,6 @@ void MainWindow::handleMetaReaderUpdate() {
         if (!img.isNull()) {
             QDir().mkpath(QFileInfo(icoFile).absolutePath());
             const QPixmap full = QPixmap::fromImage(img);
-            // Save full-size (capped at 512px) for sharp album art display
             const QPixmap large = (full.width() > 512 || full.height() > 512)
                 ? full.scaled(512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation)
                 : full;
@@ -4696,7 +4464,6 @@ void MainWindow::handleMetaReaderUpdate() {
     QTimer::singleShot(30, this, &MainWindow::advanceMetaScan);
 }
 
-// ─── Track icon helpers ───────────────────────────────────────────────────────
 
 QString MainWindow::trackIconPath(const QUrl &url) const {
     const QString hash = QCryptographicHash::hash(
@@ -4712,7 +4479,6 @@ void MainWindow::applyTrackIcon(QListWidgetItem *item, const QUrl &url) {
     if (QFile::exists(f)) {
         QPixmap pm(f);
         if (!pm.isNull()) {
-            // Icon files are now full-size — scale down for the 36px playlist slot
             item->setIcon(QIcon(pm.scaled(36, 36, Qt::KeepAspectRatioByExpanding,
                                           Qt::SmoothTransformation).copy(0, 0, 36, 36)));
         }
@@ -4729,7 +4495,6 @@ void MainWindow::reloadTrackIcons() {
     if (g_delegate) { g_delegate->showIcons = m_cfg.showTrackIcons; m_playlistWidget->update(); }
 }
 
-// ─── Playlist persistence ─────────────────────────────────────────────────────
 
 void MainWindow::savePlaylistsToFile() {
     saveCurrentPlaylistState();
@@ -4792,9 +4557,6 @@ void MainWindow::loadPlaylistsFromFile() {
     loadPlaylistState(m_activePl);
 }
 
-// Метаданные треков по ссылке (название/исполнитель/обложка/путь к скачанному
-// файлу) — без этого после перезапуска такие треки показывали бы голый URL
-// вместо названия и перекачивались бы заново при каждом воспроизведении.
 void MainWindow::saveStreamTracksToFile() {
     const QString dir = m_cfg.playlistsFolder.isEmpty()
         ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
@@ -4837,7 +4599,6 @@ void MainWindow::loadStreamTracksFromFile() {
     }
 }
 
-// ─── Settings dialog ──────────────────────────────────────────────────────────
 
 void MainWindow::openSettings() {
     const AppSettings savedCfg = m_cfg;
@@ -4892,15 +4653,11 @@ void MainWindow::openSettings() {
         applyEqSettings();
         applyIconsIfNeeded(prev);
         if (!m_cfg.discordEnabled && m_discord) m_discord->clearActivity();
-        // Сравниваем с состоянием реестра на момент ДО открытия диалога —
-        // prev тут уже испорчен предыдущими live-apply-сигналами и не годится
         if (m_cfg.launchOnStartup != savedCfg.launchOnStartup)
             setLaunchOnStartup(m_cfg.launchOnStartup);
         saveSettings();
         statusBar()->showMessage("Настройки сохранены", 2000);
     } else {
-        // Cancel — revert to state before dialog opened (в т.ч. превью
-        // эквалайзера, которое могло применяться вживую во время диалога)
         const AppSettings prev = m_cfg;
         m_cfg = savedCfg;
         applyTheme();
@@ -4911,7 +4668,6 @@ void MainWindow::openSettings() {
     }
 }
 
-// ─── Library scanner ──────────────────────────────────────────────────────────
 
 void MainWindow::scanLibrary()
 {
@@ -4922,14 +4678,12 @@ void MainWindow::scanLibrary()
         return;
     }
 
-    // Stop previous scan if running
     if (m_libraryThread && m_libraryThread->isRunning()) {
         if (m_libraryScanner) m_libraryScanner->cancel();
         m_libraryThread->quit();
         m_libraryThread->wait(2000);
     }
 
-    // Find or create "Библиотека" tab
     if (m_libraryPlIdx < 0 || m_libraryPlIdx >= m_playlists.size()) {
         saveCurrentPlaylistState();
     const QString name = "Библиотека";
@@ -4938,7 +4692,6 @@ void MainWindow::scanLibrary()
         m_libraryPlIdx = m_playlists.size() - 1;
         m_tabBar->setCurrentIndex(m_libraryPlIdx);
     } else {
-        // Clear existing library playlist
         saveCurrentPlaylistState();
         m_playlists[m_libraryPlIdx].tracks.clear();
         m_playlists[m_libraryPlIdx].currentTrack = -1;
@@ -4948,7 +4701,6 @@ void MainWindow::scanLibrary()
 
     statusBar()->showMessage("Сканирование библиотеки...");
 
-    // Setup file system watcher
     if (!m_libraryWatcher) {
         m_libraryWatcher = new QFileSystemWatcher(this);
         connect(m_libraryWatcher, &QFileSystemWatcher::directoryChanged,
@@ -4957,7 +4709,6 @@ void MainWindow::scanLibrary()
     m_libraryWatcher->removePaths(m_libraryWatcher->directories());
     m_libraryWatcher->addPath(folder);
 
-    // Launch scanner in background thread
     m_libraryScanner = new LibraryScanner(folder);
     m_libraryThread  = new QThread(this);
     m_libraryScanner->moveToThread(m_libraryThread);
@@ -4984,10 +4735,8 @@ void MainWindow::onLibraryBatch(QList<QUrl> batch)
 {
     if (m_libraryPlIdx < 0 || m_libraryPlIdx >= m_playlists.size()) return;
 
-    // If library tab is active, add directly to widget; otherwise store in data
     const bool isActive = (m_activePl == m_libraryPlIdx);
 
-    // Sort batch by filename
     std::sort(batch.begin(), batch.end(), [](const QUrl &a, const QUrl &b){
         return QFileInfo(a.toLocalFile()).fileName().toLower()
              < QFileInfo(b.toLocalFile()).fileName().toLower();
@@ -5027,14 +4776,12 @@ void MainWindow::onLibraryFinished(int total)
             .arg(total)
             .arg(m_cfg.libraryFolder), 8000);
 
-    // If the library tab wasn't active during scan, refresh it now
     if (m_activePl == m_libraryPlIdx)
         updatePlaylistInfo();
 }
 
 void MainWindow::onLibraryDirChanged(const QString &/*path*/)
 {
-    // New files appeared — offer a rescan via status bar message
     statusBar()->showMessage(
         "Обнаружены новые файлы в библиотеке. "
         "Файл → Сканировать библиотеку для обновления.", 8000);
@@ -5049,7 +4796,7 @@ void MainWindow::updateDuplicateHighlights()
     for (int i = 0; i < n; ++i) {
         QListWidgetItem *it = m_playlistWidget->item(i);
         const QString path = it->data(Qt::UserRole).value<QUrl>().toLocalFile().toLower();
-        if (!path.isEmpty()) pathCount[path]++;  // пустой путь — ссылка на музыку, не файл
+        if (!path.isEmpty()) pathCount[path]++;
     }
 
     QHash<QString, int> metaCount;
@@ -5076,7 +4823,6 @@ void MainWindow::updateDuplicateHighlights()
     m_playlistWidget->viewport()->update();
 }
 
-// ─── APO mic routing (music → microphone via EchoBox APO) ────────────────────
 
 void MainWindow::toggleMicRouting()
 {
@@ -5092,14 +4838,12 @@ void MainWindow::toggleMicRouting()
     m_micRouting = true;
     if (m_micBtn) m_micBtn->setChecked(true);
 
-    // The ring is created inside audiodg by the APO — it only exists while some
-    // app has the mic open. Poll until it appears.
     if (!m_apoOpenTimer) {
         m_apoOpenTimer = new QTimer(this);
         m_apoOpenTimer->setInterval(500);
         connect(m_apoOpenTimer, &QTimer::timeout, this, &MainWindow::apoTryOpenRing);
     }
-    apoTryOpenRing();          // try immediately
+    apoTryOpenRing();
     if (!m_apoRing) {
         m_apoOpenTimer->start();
         statusBar()->showMessage(
@@ -5136,7 +4880,6 @@ void MainWindow::showMicMenu()
         statusBar()->showMessage(on ? "Шумоподавление: вкл" : "Шумоподавление: выкл", 2500);
     });
 
-    // Сила шумоподавления (порог гейта)
     auto *gateMenu = menu.addMenu("Сила шумоподавления");
     struct { const char *label; float thr; } gates[] = {
         {"Слабое (тихий фон)",   0.008f},
@@ -5191,7 +4934,7 @@ void MainWindow::apoTryOpenRing()
     if (m_apoRing) { if (m_apoOpenTimer) m_apoOpenTimer->stop(); return; }
 
     HANDLE h = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, kEchoBoxRingName);
-    if (!h) return; // APO ещё не активен — ждём
+    if (!h) return;
 
     auto *ring = static_cast<EchoBoxRing *>(
         MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, 0));
@@ -5199,13 +4942,12 @@ void MainWindow::apoTryOpenRing()
 
     if (ring->magic != kEchoBoxRingMagic) { UnmapViewOfFile(ring); CloseHandle(h); return; }
 
-    // We are the producer — declare our sample rate.
     ring->sampleRate = 48000;
     m_apoWritePos    = ring->writePos;
 
     m_apoMapping = h;
     m_apoRing    = ring;
-    apoPushControls();               // передаём текущие громкость/режим
+    apoPushControls();
     if (m_apoOpenTimer) m_apoOpenTimer->stop();
     statusBar()->showMessage("Музыка в микрофон: включено ✓  играй трек", 4000);
 }
@@ -5237,7 +4979,6 @@ void MainWindow::apoFeed(const QAudioBuffer &buffer)
     const int inRate   = f.sampleRate();
     if (inFrames <= 0 || inCh <= 0) return;
 
-    // Read source sample → normalized float, any format
     auto rd = [&](int frame, int ch) -> float {
         const int i = frame * inCh + ch;
         switch (f.sampleFormat()) {
@@ -5265,7 +5006,6 @@ void MainWindow::apoFeed(const QAudioBuffer &buffer)
             pushFrame(L, R);
         }
     } else {
-        // Linear resample inRate → outRate
         const double ratio    = double(inRate) / double(outRate);
         const int    outCount = int(double(inFrames) / ratio);
         for (int o = 0; o < outCount; ++o) {
@@ -5280,6 +5020,6 @@ void MainWindow::apoFeed(const QAudioBuffer &buffer)
     }
 
     m_apoWritePos   = wp;
-    ring->writePos  = wp;          // publish
+    ring->writePos  = wp;
     ring->playerAlive = 1;
 }

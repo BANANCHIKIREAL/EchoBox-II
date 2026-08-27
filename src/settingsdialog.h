@@ -17,8 +17,8 @@ struct AppSettings {
     QString theme        = "mocha";
     QColor  accentColor  = QColor(0xcb, 0xa6, 0xf7);
     int     fontSizeIdx  = 1;
-    QString fontFamily   = "";   // empty = system default
-    QString fontFilePath = "";   // path to custom font file (loaded via QFontDatabase)
+    QString fontFamily   = "";
+    QString fontFilePath = "";
     QString artShape     = "rounded";
     QString appIconStyle = "classic";
 
@@ -36,27 +36,19 @@ struct AppSettings {
 
     bool discordEnabled = true;
 
-    // Куки браузера для yt-dlp (сайты, требующие вход, напр. Яндекс.Музыка) —
-    // "" значит не использовать; иначе имя браузера для --cookies-from-browser
     QString ytDlpCookiesBrowser = "";
 
-    // Качество аудио при скачивании по ссылке: "best" | "medium" | "low"
     QString streamAudioQuality = "best";
 
-    // Запуск
-    bool launchOnStartup  = false;   // добавлять в автозагрузку Windows
-    bool startMinimized   = false;   // не показывать окно при запуске (сразу в трей)
-    bool autoCheckUpdates = true;    // тихая проверка обновлений при старте
+    bool launchOnStartup  = false;
+    bool startMinimized   = false;
+    bool autoCheckUpdates = true;
 
-    // Подтверждения
-    bool confirmDelete = true;       // спрашивать перед удалением треков/плейлиста
+    bool confirmDelete = true;
 
-    // Управление
-    int seekStepSecs = 5;   // шаг перемотки ←/→ (Shift+←/→ всегда ×6)
-    int volumeStep   = 5;   // шаг громкости ↑/↓
+    int seekStepSecs = 5;
+    int volumeStep   = 5;
 
-    // Эквалайзер — гейны полос в дБ, -12..+12; работает только для
-    // локальных аудиофайлов (не видео) через отдельный движок (см. AudioEngine)
     bool  eqEnabled = false;
     float eqBands[kEqBandCount] = {0,0,0,0,0,0,0,0};
 };
@@ -142,6 +134,5 @@ private:
     class QSlider *m_eqSliders[kEqBandCount] = { nullptr };
     QLabel    *m_eqValueLabels[kEqBandCount] = { nullptr };
 
-    // collect all live-connectable widgets
     QList<QObject*> m_liveWidgets;
 };

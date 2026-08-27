@@ -16,17 +16,14 @@ public:
 
     QSize sizeHint() const override;
 
-    // QSlider-compatible API
     void setRange(int min, int max);
     void setValue(int v);
     int  value() const { return m_value; }
 
-    // Waveform
     void loadWaveform(const QUrl &url, qint64 durationMs);
     void clearWaveform();
     void setPeaks(const QVector<float> &peaks);
 
-    // Theme
     void setAccentColor(const QColor &c);
     void setTrackColor (const QColor &c);
     void setBackgroundColor(const QColor &c);

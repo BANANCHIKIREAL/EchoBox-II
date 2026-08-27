@@ -88,7 +88,7 @@ void DiscordRPC::updateActivity(const QString &title, const QString &artist, boo
     activity["state"]   = playing
         ? (artist.isEmpty() ? "EchoBox II" : artist)
         : "⏸ На паузе";
-    activity["type"]    = 2; // Listening
+    activity["type"]    = 2;
 
     if (playing) {
         QJsonObject ts;

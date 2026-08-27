@@ -59,14 +59,6 @@ struct PlaylistEntry {
     int          currentTrack = -1;
 };
 
-// Трек, добавленный по ссылке (SoundCloud, YouTube и т.д. через yt-dlp,
-// либо прямая ссылка на аудиофайл). Ключ в m_streamTracks — исходная
-// ссылка пользователя (то, что лежит в m_playlist). Для ссылок через
-// yt-dlp трек скачивается целиком на диск (localPath) — так надёжнее,
-// чем отдавать плееру подписанный CDN-адрес напрямую (многие сервисы,
-// включая YouTube, требуют для него специфичные HTTP-заголовки, которых
-// у QMediaPlayer нет возможности передать). Для настоящих прямых ссылок
-// на аудиофайл (isDirectUrl) скачивание не нужно — играем поток как есть.
 struct StreamTrackInfo {
     QString title;
     QString artist;
@@ -81,7 +73,7 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
-    bool startsMinimized() const;   // читается из main.cpp перед show()
+    bool startsMinimized() const;
 
 protected:
     void dragEnterEvent(QDragEnterEvent *) override;
@@ -91,13 +83,11 @@ protected:
     bool eventFilter(QObject *obj, QEvent *ev) override;
 
 private slots:
-    // File
     void openFiles();
     void openFolder();
     void openUrlDialog();
     void savePlaylist();
     void loadPlaylist();
-    // Playlist
     void clearPlaylist();
     void removeSelectedTracks();
     void moveSelectedTracksToPlaylist(int targetIndex);
@@ -108,26 +98,22 @@ private slots:
     void onTrackActivated(QListWidgetItem *item);
     void onPlaylistContextMenu(const QPoint &pos);
     void rebuildPlaylistFromWidget();
-    // Transport
     void togglePlayPause();
     void stop();
     void previous();
     void next();
-    void nextAuto(); // called by EndOfMedia — respects repeat mode
-    // Audio
+    void nextAuto();
     void setVolume(int v);
     void toggleMute();
     void onSpeedChanged(int index);
-    // Modes
     void toggleShuffle();
     void cycleRepeat();
     void toggleMiniPlayer();
     void toggleMiniDock();
     void toggleAlwaysOnTop();
     void toggleRemainingTime();
-    void toggleMicRouting();   // подмешивать музыку в микрофон через EchoBox APO
-    void apoTryOpenRing();     // периодически пытается открыть ring-буфер APO
-    // Player signals
+    void toggleMicRouting();
+    void apoTryOpenRing();
     void onDurationChanged(qint64 ms);
     void onWaveformReady(const QUrl &url, qint64 duration, QVector<float> peaks);
     void onPositionChanged(qint64 ms);
@@ -136,12 +122,10 @@ private slots:
     void onMetaDataChanged();
     void onError(QMediaPlayer::Error error, const QString &msg);
     void onAudioBuffer(const QAudioBuffer &buffer);
-    // Playlists
     void newPlaylist();
     void onTabChanged(int index);
     void onTabDoubleClicked(int index);
     void onTabContextMenu(const QPoint &pos);
-    // Other
     void showAbout();
     void checkForUpdates(bool manual);
     void downloadAndInstallUpdate(const QString &assetUrl, const QString &tag,
@@ -150,7 +134,6 @@ private slots:
                                   qint64 expectedSize);
     void openRecentFile(const QString &path);
     void openSettings();
-    // Library scanner
     void scanLibrary();
     void onLibraryBatch(QList<QUrl> batch);
     void onLibraryProgress(int found, int scanned);
@@ -176,7 +159,6 @@ private:
     void loadPlaylistState(int index);
     void deletePlaylist(int index);
 
-    // ── Ссылки на музыку (SoundCloud/YouTube/др. через yt-dlp, прямые URL) ────
     void openStreamUrl(const QString &link);
     bool looksLikeDirectMediaUrl(const QUrl &url) const;
     void addDirectStreamUrl(const QUrl &url);
@@ -197,12 +179,10 @@ private:
     QString trackDisplayArtist(const QUrl &url) const;
     QString playlistRowLabel(const QUrl &url) const;
 
-    // Feature 8 — position memory
     QString positionKey(const QUrl &url) const;
     void    saveTrackPosition();
 
-    // Feature 13 — crossfade
-    void applyVolume();  // applies m_lastVolume * m_fadeFactor to audio output
+    void applyVolume();
 
     void updateRepeatButton();
     void updateAlbumArt();
@@ -213,20 +193,16 @@ private:
     void resetWaveformUi();
     void applyWaveformPeaks(const QVector<float> &peaks);
 
-    // Плавные переходы — общие хелперы, переиспользуются по всему UI
     void fadeInWidget(QWidget *w, int durationMs = 260);
     void fadeOutWidget(QWidget *w, int durationMs = 220);
     void popButtonIcon(QToolButton *btn);
     void animateTrackHighlight(const QUrl &url);
 
-    // Баннер загрузки (вместо голого текста в строке состояния)
     void showLoadingBanner(const QString &text);
     void updateLoadingText(const QString &text);
-    void setLoadingProgress(int percent);   // -1 = неопределённый (busy-анимация)
+    void setLoadingProgress(int percent);
     void hideLoadingBanner();
 
-    // Диалог ошибки с текстом, который можно выделить/скопировать —
-    // строка состояния для этого не годится (обрезается, пропадает сама)
     void showCopyableError(const QString &title, const QString &message);
     void addRecentFile(const QString &path);
     void refreshRecentMenu();
@@ -245,17 +221,12 @@ private:
     void advanceMetaScan();
     void handleMetaReaderUpdate();
 
-    // ── Player ───────────────────────────────────────────────────────────────
     QMediaPlayer   *m_player      = nullptr;
     QAudioOutput   *m_audioOutput = nullptr;
-    QMediaPlayer   *m_metaReader  = nullptr;  // metadata-only, no audio output
+    QMediaPlayer   *m_metaReader  = nullptr;
     QList<QUrl>     m_metaScanQueue;
     bool            m_scanInProgress = false;
 
-    // ── Эквалайзер ───────────────────────────────────────────────────────────
-    // "Теневой" движок: QMediaPlayer остаётся единственным источником
-    // истины для позиции/состояния/кроссфейда (см. applyVolume/playerSeek),
-    // просто приглушается, когда AudioEngine активен и реально слышим
     AudioEngine *m_eqEngine = nullptr;
     bool         m_eqActive = false;
     bool         m_eqPending = false;
@@ -264,7 +235,6 @@ private:
     void stopEqEngine();
     void playerSeek(qint64 ms);
 
-    // ── State ────────────────────────────────────────────────────────────────
     QList<QUrl>    m_playlist;
     int            m_currentIndex  = -1;
     bool           m_shuffle       = false;
@@ -277,47 +247,40 @@ private:
     bool           m_miniTransitioning = false;
     bool           m_miniDragging  = false;
     QPoint         m_miniDragOffset;
-    bool           m_miniDocked    = false;  // растянут на всю ширину экрана и прижат к верху
-    QRect          m_miniUndockedGeometry;   // геометрия для возврата при откреплении
-    QRect          m_fullPlayerGeometry;     // геометрия для плавного возврата из F11
+    bool           m_miniDocked    = false;
+    QRect          m_miniUndockedGeometry;
+    QRect          m_fullPlayerGeometry;
 
-    // ── Layout helpers ───────────────────────────────────────────────────────
     AuroraWidget   *m_aurora      = nullptr;
     QFrame         *m_separator   = nullptr;
 
-    // ── Media panel ──────────────────────────────────────────────────────────
     QWidget        *m_topWidget   = nullptr;
     QStackedWidget *m_mediaStack  = nullptr;
     QLabel         *m_albumArt   = nullptr;
     QVideoWidget   *m_videoWidget = nullptr;
 
-    // ── Track info ───────────────────────────────────────────────────────────
     QLabel  *m_titleLabel  = nullptr;
     QLabel  *m_artistLabel = nullptr;
     QLabel  *m_albumLabel  = nullptr;
 
-    // ── Индикатор загрузки (скачивание трека по ссылке / обновления) ─────────
     QWidget     *m_loadingBanner = nullptr;
     QProgressBar *m_loadingBar   = nullptr;
     QLabel      *m_loadingText   = nullptr;
     QLabel      *m_loadingIcon   = nullptr;
     QLabel      *m_loadingPercent = nullptr;
-    QPropertyAnimation *m_loadingAnim = nullptr;   // текущий fade-in/out баннера (для отмены гонок)
+    QPropertyAnimation *m_loadingAnim = nullptr;
     QWidget     *m_miniLoadingPanel = nullptr;
     QLabel      *m_miniLoadingIcon = nullptr;
-    QProgressBar *m_miniLoadingBar = nullptr;      // компактный аналог для мини-плеера
+    QProgressBar *m_miniLoadingBar = nullptr;
     QLabel      *m_miniLoadingPercent = nullptr;
 
-    // ── Visualizer ───────────────────────────────────────────────────────────
     Visualizer *m_visualizer  = nullptr;
-    QPixmap     m_coverPixmap;          // raw cover from metadata (unscaled)
+    QPixmap     m_coverPixmap;
 
-    // ── Seek ─────────────────────────────────────────────────────────────────
     WaveformSlider *m_seekSlider = nullptr;
     QLabel         *m_timeLabel  = nullptr;
     WaveformCache m_waveformCache;
 
-    // ── Transport controls ───────────────────────────────────────────────────
     QToolButton *m_prevBtn      = nullptr;
     QToolButton *m_playPauseBtn = nullptr;
     QToolButton *m_stopBtn      = nullptr;
@@ -326,12 +289,10 @@ private:
     QToolButton *m_repeatBtn    = nullptr;
     QComboBox   *m_speedCombo   = nullptr;
 
-    // ── Volume ───────────────────────────────────────────────────────────────
     QToolButton *m_muteBtn      = nullptr;
     QSlider     *m_volumeSlider = nullptr;
     QLabel      *m_volumeLabel  = nullptr;
 
-    // ── Mini player ──────────────────────────────────────────────────────────
     QWidget     *m_miniBar        = nullptr;
     QToolButton *m_miniPrevBtn    = nullptr;
     QToolButton *m_miniPlayBtn    = nullptr;
@@ -348,7 +309,6 @@ private:
     QToolButton *m_miniMinimizeBtn = nullptr;
     QToolButton *m_miniCloseBtn   = nullptr;
 
-    // ── Playlist panel ───────────────────────────────────────────────────────
     QWidget     *m_playlistPanel  = nullptr;
     QTabBar     *m_tabBar         = nullptr;
     QLineEdit   *m_searchEdit     = nullptr;
@@ -359,17 +319,14 @@ private:
     QToolButton *m_playlistRemoveBtn = nullptr;
     QToolButton *m_playlistClearBtn = nullptr;
 
-    // ── Multi-playlist data ───────────────────────────────────────────────────
     QVector<PlaylistEntry> m_playlists;
     int                    m_activePl = 0;
 
-    // ── Ссылки на музыку (SoundCloud/YouTube/др.) ────────────────────────────
     QHash<QUrl, StreamTrackInfo> m_streamTracks;
     bool                         m_ytDlpMissingWarned = false;
-    QNetworkAccessManager       *m_streamArtNam = nullptr;  // скачивание обложек
-    QSet<QUrl>                   m_streamResolving;         // ссылки, которые yt-dlp сейчас скачивает
+    QNetworkAccessManager       *m_streamArtNam = nullptr;
+    QSet<QUrl>                   m_streamResolving;
 
-    // ── Menu actions ─────────────────────────────────────────────────────────
     QMenu        *m_recentMenu     = nullptr;
     QAction      *m_openUrlAct     = nullptr;
     QAction      *m_scanLibraryAct = nullptr;
@@ -380,51 +337,43 @@ private:
     QAction      *m_repeatOneAct   = nullptr;
     QAction      *m_repeatAllAct   = nullptr;
 
-    // ── Tray ─────────────────────────────────────────────────────────────────
     QSystemTrayIcon *m_tray        = nullptr;
     QAction         *m_trayPlayAct = nullptr;
     QAction         *m_trayNextAct = nullptr;
 
-    // ── Audio analysis (Qt 6.6+) ─────────────────────────────────────────────
 #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
     QAudioBufferOutput *m_audioBufferOut = nullptr;
 #endif
 
-    // ── Discord RPC ──────────────────────────────────────────────────────────
     DiscordRPC *m_discord = nullptr;
 
-    // ── Library scanner ──────────────────────────────────────────────────────
     LibraryScanner    *m_libraryScanner = nullptr;
     QThread           *m_libraryThread  = nullptr;
     QFileSystemWatcher *m_libraryWatcher = nullptr;
-    int                m_libraryPlIdx   = -1;   // index of "Библиотека" tab
+    int                m_libraryPlIdx   = -1;
 
-    // ── Crossfade ─────────────────────────────────────────────────────────────
     int    m_crossfadeSecs = 0;
     bool   m_crossfading   = false;
     float  m_fadeFactor    = 1.0f;
     QTimer *m_fadeInTimer  = nullptr;
 
-    // ── APO mic routing (music → microphone via EchoBox APO) ─────────────────
     QToolButton *m_micBtn        = nullptr;
     bool         m_micRouting    = false;
-    void        *m_apoMapping    = nullptr;  // HANDLE
-    void        *m_apoRing       = nullptr;  // EchoBoxRing*
-    QTimer      *m_apoOpenTimer  = nullptr;  // polls until APO ring appears
-    unsigned     m_apoWritePos   = 0;        // local mirror of ring writePos (frames)
-    bool         m_apoBlockVoice = false;    // "только музыка" — глушить реальный микрофон
-    float        m_apoMusicGain  = 1.5f;     // громкость музыки в микрофоне
-    bool         m_apoNoiseGate  = true;     // шумоподавление голоса (гейт + HPF)
-    float        m_apoGateThresh = 0.02f;    // порог гейта
+    void        *m_apoMapping    = nullptr;
+    void        *m_apoRing       = nullptr;
+    QTimer      *m_apoOpenTimer  = nullptr;
+    unsigned     m_apoWritePos   = 0;
+    bool         m_apoBlockVoice = false;
+    float        m_apoMusicGain  = 1.5f;
+    bool         m_apoNoiseGate  = true;
+    float        m_apoGateThresh = 0.02f;
     void         apoCloseRing();
     void         apoFeed(const class QAudioBuffer &buffer);
-    void         apoPushControls();          // пишет blockVoice/musicGain в ring
-    void         showMicMenu();              // ПКМ-меню кнопки микрофона
+    void         apoPushControls();
+    void         showMicMenu();
 
-    // ── Настройки ─────────────────────────────────────────────────────────────
     AppSettings m_cfg;
 
-    // ── Persistence ──────────────────────────────────────────────────────────
     QSettings   m_settings;
     QStringList m_recentFiles;
     static const int MAX_RECENT = 10;

@@ -51,9 +51,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     const std::wstring exeName = argv[4];
     LocalFree(argv);
 
-    // Accept only the known EchoBox executable and ordinary, non-root folders.
-    // All package bytes were SHA-256 verified by the main application before
-    // this helper was started.
     if (!pidIsValid ||
         _wcsicmp(exeName.c_str(), L"EchoBoxII.exe") != 0 ||
         source == source.root_path() || target == target.root_path() ||
@@ -68,8 +65,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         CloseHandle(process);
     }
 
-    // Keep a recoverable snapshot in TEMP. A failed backup must not damage the
-    // current installation; copying the verified update starts only afterwards.
     const auto stamp = std::chrono::system_clock::now().time_since_epoch().count();
     const fs::path backup = fs::temp_directory_path() /
         (L"EchoBoxII_backup_" + std::to_wstring(stamp));

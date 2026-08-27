@@ -16,7 +16,7 @@ public:
     QSize sizeHint() const override;
 
     void setActive(bool active);
-    void feedAudioBuffer(const QAudioBuffer &buffer);  // реальный звук
+    void feedAudioBuffer(const QAudioBuffer &buffer);
     void setThemeColors(const QColor &background, const QVector<QColor> &colors);
 
 protected:

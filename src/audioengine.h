@@ -9,13 +9,9 @@
 class QAudioDecoder;
 class QAudioSink;
 
-// Число полос графического эквалайзера и их центральные частоты (Гц) —
-// стандартный набор для 8-полосного графического EQ
 constexpr int kEqBandCount = 8;
 extern const int kEqBandFreqs[kEqBandCount];
 
-// Один biquad-фильтр второго порядка (Direct Form I), настраиваемый как
-// пиковый ("peaking") EQ по формулам из Audio EQ Cookbook (RBJ)
 struct BiquadState {
     float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
     float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
@@ -25,12 +21,6 @@ struct BiquadState {
     void reset();
 };
 
-// QIODevice, из которого QAudioSink в pull-режиме читает уже
-// эквализированные и обработанные по громкости/скорости сэмплы. PCM
-// заполняется целиком ДО начала воспроизведения (см. AudioEngine), поэтому
-// readData() — единственное место, которое трогает m_pcm, и потокобезопасно
-// без мьютексов: параметры, которые может поменять GUI-поток на лету
-// (громкость, скорость, гейны полос), хранятся как atomic
 class EqPlaybackDevice : public QIODevice {
     Q_OBJECT
 public:
@@ -54,13 +44,13 @@ protected:
     qint64 writeData(const char *data, qint64 maxSize) override;
 
 private:
-    QVector<float> m_pcm;              // interleaved, 2 канала
+    QVector<float> m_pcm;
     int m_sourceSampleRate = 44100;
     int m_outputSampleRate = 44100;
     int m_outputChannels = 2;
     QAudioFormat::SampleFormat m_outputSampleFormat = QAudioFormat::Float;
     std::atomic<qint64>  m_totalFrames{0};
-    std::atomic<double>  m_frameCursor{0.0};   // точная позиция чтения (дробная — из-за ресемплинга при смене скорости)
+    std::atomic<double>  m_frameCursor{0.0};
 
     std::atomic<float>  m_volume{1.0f};
     std::atomic<double> m_rate{1.0};
@@ -68,20 +58,13 @@ private:
     std::atomic<float>  m_bandGains[kEqBandCount];
 
     float m_appliedGains[kEqBandCount] = {0};
-    BiquadState m_filters[2][kEqBandCount];   // [канал][полоса]
+    BiquadState m_filters[2][kEqBandCount];
     bool m_filtersInited = false;
 
     void rebuildFiltersIfNeeded();
-    float sampleAt(int channel, double frame) const;   // линейная интерполяция между соседними сэмплами
+    float sampleAt(int channel, double frame) const;
 };
 
-// Декодирует локальный файл целиком в память (QAudioDecoder) и проигрывает
-// его через QAudioSink с применением графического эквалайзера. Используется
-// как "теневой" движок параллельно с обычным QMediaPlayer — см. mainwindow.cpp:
-// пока эквалайзер выключен, ничего не меняется; как только он включён (для
-// аудиофайлов), обычный плеер приглушается, а слышимый звук идёт отсюда.
-// Такая схема почти не трогает уже отлаженную логику позиции/кроссфейда/
-// сохранения состояния — она вся продолжает жить на QMediaPlayer как раньше.
 class AudioEngine : public QObject {
     Q_OBJECT
 public:
@@ -94,14 +77,14 @@ public:
     void stop();
     void setPosition(qint64 ms);
 
-    void setVolume(float v);           // 0..1
-    void setPlaybackRate(double rate); // 0.5 .. 2.0 — простой ресемплинг (меняется и высота тона)
+    void setVolume(float v);
+    void setPlaybackRate(double rate);
 
     void setEqEnabled(bool on);
     void setEqBandGain(int band, float dB);
 
 signals:
-    void ready();                 // декодирование завершено, можно играть без задержки
+    void ready();
     void decodeError(QString msg);
 
 private slots:
@@ -114,7 +97,7 @@ private:
     QAudioSink    *m_sink    = nullptr;
     EqPlaybackDevice *m_device = nullptr;
 
-    QVector<float> m_pcm;      // накопитель во время декодирования
+    QVector<float> m_pcm;
     int m_sampleRate = 44100;
     QUrl m_source;
     bool m_decodedReady = false;

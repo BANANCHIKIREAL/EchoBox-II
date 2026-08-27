@@ -11,7 +11,7 @@
 #include <cmath>
 
 namespace {
-constexpr quint32 kMagic = 0x45425746u; // EBWF
+constexpr quint32 kMagic = 0x45425746u;
 constexpr quint16 kVersion = 1;
 constexpr int kMemoryEntries = 12;
 constexpr int kDiskEntries = 2048;

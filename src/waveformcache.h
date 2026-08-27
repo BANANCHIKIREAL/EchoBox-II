@@ -5,9 +5,6 @@
 #include <QUrl>
 #include <QVector>
 
-// Persistent, validated waveform cache. MainWindow only asks this component
-// to load/save peaks and does not know anything about the binary format,
-// invalidation rules or memory/disk limits.
 class WaveformCache {
 public:
     bool load(const QUrl &url, qint64 duration, QVector<float> *peaks);

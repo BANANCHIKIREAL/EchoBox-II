@@ -11,12 +11,10 @@
 #include <algorithm>
 #include <numeric>
 
-// ─── Iterative Cooley-Tukey FFT ──────────────────────────────────────────────
 
 void Visualizer::fft(std::vector<std::complex<float>> &data) {
     const int n = int(data.size());
 
-    // Bit-reversal permutation
     for (int i = 1, j = 0; i < n; ++i) {
         int bit = n >> 1;
         for (; j & bit; bit >>= 1) j ^= bit;
@@ -24,7 +22,6 @@ void Visualizer::fft(std::vector<std::complex<float>> &data) {
         if (i < j) std::swap(data[i], data[j]);
     }
 
-    // FFT butterfly
     for (int len = 2; len <= n; len <<= 1) {
         float ang = -2.0f * float(M_PI) / float(len);
         std::complex<float> wlen(std::cos(ang), std::sin(ang));
@@ -41,12 +38,10 @@ void Visualizer::fft(std::vector<std::complex<float>> &data) {
     }
 }
 
-// ─── Map PCM samples → BARS frequency bands ──────────────────────────────────
 
 QVector<float> Visualizer::computeFFTBands(const float *mono, int count) {
     constexpr int N = 2048;
 
-    // Prepare FFT input with Hann window
     std::vector<std::complex<float>> data(N, {0, 0});
     int fill = std::min(count, N);
     for (int i = 0; i < fill; ++i) {
@@ -56,12 +51,10 @@ QVector<float> Visualizer::computeFFTBands(const float *mono, int count) {
 
     fft(data);
 
-    // Magnitude spectrum (only first N/2 bins)
     std::vector<float> mag(N / 2);
     for (int i = 0; i < N / 2; ++i)
         mag[i] = std::abs(data[i]) / (N / 4.0f);
 
-    // Map to BARS — логарифмически, до ~10 кГц (бин ~465 при 44100 Гц)
     QVector<float> bands(BARS, 0.0f);
     const float logMin = std::log10(2.0f);
     const float logMax = std::log10(460.0f);
@@ -81,7 +74,6 @@ QVector<float> Visualizer::computeFFTBands(const float *mono, int count) {
     return bands;
 }
 
-// ─── Widget ──────────────────────────────────────────────────────────────────
 
 Visualizer::Visualizer(QWidget *parent) : QWidget(parent) {
     m_h.fill(0.0f, BARS);
@@ -92,7 +84,7 @@ Visualizer::Visualizer(QWidget *parent) : QWidget(parent) {
     };
 
     m_timer = new QTimer(this);
-    m_timer->setInterval(30); // ~33 fps
+    m_timer->setInterval(30);
     connect(m_timer, &QTimer::timeout, this, &Visualizer::tick);
     m_timer->start();
 
@@ -151,7 +143,6 @@ void Visualizer::feedAudioBuffer(const QAudioBuffer &buffer) {
     m_hasBands = true;
 }
 
-// ─── Animation tick ──────────────────────────────────────────────────────────
 
 void Visualizer::tick() {
     m_auroraPhase += 0.012f;
@@ -166,7 +157,7 @@ void Visualizer::tick() {
 
     for (int i = 0; i < BARS; ++i) {
         float d = m_t[i] - m_h[i];
-        float speed = (d > 0) ? 0.28f : 0.18f; // attack fast, decay slow
+        float speed = (d > 0) ? 0.28f : 0.18f;
         if (qAbs(d) > 0.002f) { m_h[i] += d * speed; changed = true; }
         else m_h[i] = m_t[i];
 
@@ -175,7 +166,6 @@ void Visualizer::tick() {
     if (changed || m_active) update();
 }
 
-// ─── Paint ───────────────────────────────────────────────────────────────────
 
 void Visualizer::paintEvent(QPaintEvent *) {
     QPainter p(this);
@@ -187,7 +177,6 @@ void Visualizer::paintEvent(QPaintEvent *) {
     const float gap = bw * 0.26f;
     const float t  = m_auroraPhase;
 
-    // ── Background with subtle aurora ────────────────────────────────────────
     p.fillRect(rect(), m_background);
     {
         QRadialGradient g(W * (0.5f + 0.2f * qSin(t)),
@@ -201,14 +190,12 @@ void Visualizer::paintEvent(QPaintEvent *) {
         p.fillRect(rect(), g);
     }
 
-    // ── Bars ─────────────────────────────────────────────────────────────────
     for (int i = 0; i < BARS; ++i) {
         const float bh  = qMax(m_h[i] * (H - 8.0f), 2.0f);
         const float x   = i * bw + gap * 0.5f;
         const float y   = H - bh;
         const float fw  = bw - gap;
 
-        // Gradient: teal→blue→mauve→pink based on height
         QLinearGradient grad(x, y + bh, x, y);
         grad.setColorAt(0.00f, m_themeColors.value(0, QColor(0x94,0xe2,0xd5)));
         grad.setColorAt(0.45f, m_themeColors.value(1, QColor(0x89,0xb4,0xfa)));
@@ -219,7 +206,6 @@ void Visualizer::paintEvent(QPaintEvent *) {
         p.setPen(Qt::NoPen);
         p.drawRoundedRect(QRectF(x, y, fw, bh), 2.5f, 2.5f);
 
-        // Top glow
         QLinearGradient topGlow(x, y, x, y + bh * 0.18f);
         topGlow.setColorAt(0.0f, QColor(0xff, 0xff, 0xff, 55));
         topGlow.setColorAt(1.0f, Qt::transparent);
@@ -227,7 +213,6 @@ void Visualizer::paintEvent(QPaintEvent *) {
 
     }
 
-    // ── Bottom reflection (mirror, faded) ────────────────────────────────────
     p.setOpacity(0.10f);
     for (int i = 0; i < BARS; ++i) {
         const float bh  = qMax(m_h[i] * (H - 8.0f), 2.0f) * 0.3f;
