@@ -1,5 +1,6 @@
 #include "settingsdialog.h"
 #include "icons.h"
+#include "materialicons.h"
 #include "thememanager.h"
 #include "logo.h"
 #include <QListWidget>
@@ -69,8 +70,9 @@ static void flashWidget(QWidget *w, int durationMs = 260) {
 
 static QWidget *makeHead(const QString &title, const QString &help = "") {
     auto *w = new QWidget;
+    w->setObjectName("settingsSectionHeader");
     auto *l = new QHBoxLayout(w);
-    l->setContentsMargins(0, 4, 0, 0);
+    l->setContentsMargins(11, 7, 11, 7);
     l->setSpacing(4);
     auto *lbl = new QLabel("<b>" + title + "</b>");
     lbl->setObjectName("settingsHead");
@@ -99,7 +101,16 @@ static QFrame *makeSep() {
     return f;
 }
 
-static QIcon settingsSectionIcon(const QString &id, const QColor &color) {
+static QIcon settingsSectionIcon(const QString &id, const QColor &color,
+                                 bool materialSymbols = false) {
+    if (materialSymbols) {
+        if (id == "appearance") return MaterialIco::icon("tune", color, 18);
+        if (id == "player") return MaterialIco::icon("play_arrow", color, 18);
+        if (id == "equalizer") return MaterialIco::icon("equalizer", color, 18);
+        if (id == "files") return MaterialIco::icon("folder", color, 18);
+        if (id == "interface") return MaterialIco::icon("library_music", color, 18);
+        if (id == "integrations") return MaterialIco::icon("link", color, 18);
+    }
     if (id == "appearance") return Ico::sliders(color, 18);
     if (id == "player")     return Ico::play(color, 18);
     if (id == "equalizer")  return Ico::equalizer(color, 18);
@@ -113,8 +124,9 @@ static QIcon settingsSectionIcon(const QString &id, const QColor &color) {
 SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
     : QDialog(parent), m_result(s)
 {
+    setObjectName("settingsDialog");
     setWindowTitle("Настройки");
-    setMinimumSize(620, 500);
+    setMinimumSize(760, 580);
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
     auto *root = new QVBoxLayout(this);
@@ -140,10 +152,10 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
 
     auto *sidebar = new QListWidget(this);
     sidebar->setObjectName("settingsSidebar");
-    sidebar->setFixedWidth(180);
+    sidebar->setFixedWidth(205);
     sidebar->setFocusPolicy(Qt::NoFocus);
     sidebar->setFrameShape(QFrame::NoFrame);
-    sidebar->setIconSize({18, 18});
+    sidebar->setIconSize({20, 20});
     sidebar->setUniformItemSizes(true);
 
     auto *stack = new QStackedWidget(this);
@@ -169,10 +181,11 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
     for (const auto &sec : sections) {
         const QString sectionId = QString::fromLatin1(sec.id);
         auto *item = new QListWidgetItem(
-            settingsSectionIcon(sectionId, initialPalette.subtext0),
+            settingsSectionIcon(sectionId, initialPalette.subtext0,
+                                initialPalette.id == "liquid"),
             "  " + sec.title);
         item->setData(Qt::UserRole, sectionId);
-        item->setSizeHint(QSize(0, 38));
+        item->setSizeHint(QSize(0, 46));
         sidebar->addItem(item);
         stack->addWidget(sec.page);
     }
@@ -215,6 +228,7 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
     root->addWidget(footer);
 
     connectLive();
+    updateLiquidLockedControls();
 }
 
 
@@ -282,12 +296,22 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
     l->addLayout(themeRow);
     refreshThemePreview();
 
+    m_modernLayoutChk = new QCheckBox("Liquid Glass");
+    m_modernLayoutChk->setChecked(m_result.modernLayout);
+    m_modernLayoutChk->setToolTip(
+        "Боковая навигация, просторная библиотека и панель управления снизу");
+    l->addWidget(m_modernLayoutChk);
+    m_liveWidgets << m_modernLayoutChk;
+
+    l->addWidget(makeSep());
+
     connect(m_themeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int index) {
         if (index < 0 || !m_accentSwatch) return;
         m_result.theme = m_themeCombo->itemData(index).toString();
         setAccentPreset(ThemeManager::defaultAccent(m_result.theme));
         refreshThemePreview();
+        updateLiquidLockedControls();
         liveApply();
     });
 
@@ -315,12 +339,14 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
         {"aurora", "Aurora"}, {"sunset", "Sunset"},
         {"ocean", "Ocean"}, {"mono", "Obsidian"},
         {"ruby", "Ruby"}, {"cloud", "Cloud"},
-        {"ember", "Ember"},
+        {"ember", "Ember"}, {"liquid", "Liquid"},
     };
     int selectedIconRow = 0;
     for (const auto &entry : appIcons) {
-        auto *item = new QListWidgetItem(
-            QIcon(createLogo(112, logoBase, entry.id)), entry.name);
+        QIcon icon;
+        icon.addPixmap(createLogo(56, logoBase, entry.id));
+        icon.addPixmap(createLogo(112, logoBase, entry.id));
+        auto *item = new QListWidgetItem(icon, entry.name);
         item->setData(Qt::UserRole, entry.id);
         item->setTextAlignment(Qt::AlignHCenter | Qt::AlignBottom);
         item->setToolTip(entry.name);
@@ -331,6 +357,18 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
     m_appIconList->setCurrentRow(selectedIconRow);
     l->addWidget(m_appIconList);
     m_liveWidgets << m_appIconList;
+
+    connect(m_modernLayoutChk, &QCheckBox::toggled, this, [this](bool enabled) {
+        if (!enabled) return;
+        const int liquidTheme = m_themeCombo->findData("liquid");
+        if (liquidTheme >= 0) m_themeCombo->setCurrentIndex(liquidTheme);
+        for (int row = 0; row < m_appIconList->count(); ++row) {
+            if (m_appIconList->item(row)->data(Qt::UserRole).toString() == "liquid") {
+                m_appIconList->setCurrentRow(row);
+                break;
+            }
+        }
+    });
 
     l->addWidget(makeSep());
 
@@ -865,7 +903,27 @@ void SettingsDialog::refreshSidebarIcons() {
         const QColor color = row == m_sidebar->currentRow()
             ? palette.accent : palette.subtext0;
         item->setIcon(settingsSectionIcon(
-            item->data(Qt::UserRole).toString(), color));
+            item->data(Qt::UserRole).toString(), color,
+            palette.id == "liquid"));
+    }
+}
+
+void SettingsDialog::updateLiquidLockedControls() {
+    const bool liquid = m_themeCombo
+        && m_themeCombo->currentData().toString() == "liquid";
+    if (m_vizChk) {
+        m_vizChk->setChecked(liquid ? true : m_vizChk->isChecked());
+        m_vizChk->setEnabled(!liquid);
+        m_vizChk->setToolTip(liquid
+            ? "В Liquid Glass визуализатор является частью оформления"
+            : QString());
+    }
+    if (m_statusBarChk) {
+        m_statusBarChk->setChecked(liquid ? false : m_statusBarChk->isChecked());
+        m_statusBarChk->setEnabled(!liquid);
+        m_statusBarChk->setToolTip(liquid
+            ? "В Liquid Glass используется собственная нижняя панель"
+            : QString());
     }
 }
 
@@ -897,6 +955,8 @@ void SettingsDialog::animateToPage(int index) {
         m_stack->setCurrentIndex(index);
 
         QWidget *inPage = m_stack->currentWidget();
+        const QPoint finalPosition = inPage->pos();
+        inPage->move(finalPosition + QPoint(22, 0));
         auto *inEffect = new QGraphicsOpacityEffect(inPage);
         inPage->setGraphicsEffect(inEffect);
         auto *fadeIn = new QPropertyAnimation(inEffect, "opacity", this);
@@ -907,6 +967,12 @@ void SettingsDialog::animateToPage(int index) {
         connect(fadeIn, &QPropertyAnimation::finished, this, [inPage]{
             inPage->setGraphicsEffect(nullptr);
         });
+        auto *slideIn = new QPropertyAnimation(inPage, "pos", inPage);
+        slideIn->setDuration(260);
+        slideIn->setStartValue(finalPosition + QPoint(22, 0));
+        slideIn->setEndValue(finalPosition);
+        slideIn->setEasingCurve(QEasingCurve::OutCubic);
+        slideIn->start(QAbstractAnimation::DeleteWhenStopped);
         fadeIn->start(QAbstractAnimation::DeleteWhenStopped);
     });
     fadeOut->start(QAbstractAnimation::DeleteWhenStopped);
@@ -988,6 +1054,7 @@ void SettingsDialog::collectResult() {
     m_result.showTrackIcons = m_iconsChk->isChecked();
     m_result.showStatusBar  = m_statusBarChk->isChecked();
     m_result.closeToTray    = m_trayChk->isChecked();
+    m_result.modernLayout   = m_modernLayoutChk->isChecked();
     m_result.confirmDelete  = m_confirmDeleteChk->isChecked();
 
     m_result.launchOnStartup  = m_launchOnStartupChk->isChecked();
@@ -1014,14 +1081,19 @@ void SettingsDialog::refreshCacheSize() {
 }
 
 void SettingsDialog::clearStreamCache() {
-    const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
-                            + "/streamcache";
     if (QMessageBox::question(this, "Очистить кэш",
             "Удалить все скачанные по ссылке треки из кэша?\n"
             "При следующем воспроизведении они скачаются заново.",
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
         return;
-    QDir(cacheDir).removeRecursively();
-    QDir().mkpath(cacheDir);
+    m_cacheSizeLabel->setText("Очистка…");
+    emit clearStreamCacheRequested();
+}
+
+void SettingsDialog::finishCacheClear(bool success, const QString &message) {
     refreshCacheSize();
+    if (success)
+        QMessageBox::information(this, "Кэш очищен", message);
+    else
+        QMessageBox::warning(this, "Не удалось очистить кэш", message);
 }

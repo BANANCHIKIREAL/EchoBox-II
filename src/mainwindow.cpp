@@ -7,11 +7,13 @@
 #include <QFontDatabase>
 #include "logo.h"
 #include "icons.h"
+#include "materialicons.h"
 #include "discordrpc.h"
 #include "thememanager.h"
 
 #include <QApplication>
 #include <QClipboard>
+#include <QCursor>
 #include <QScreen>
 #include <QPropertyAnimation>
 #include <QVariantAnimation>
@@ -27,6 +29,7 @@
 #include <QListWidget>
 #include <QScrollBar>
 #include <QWheelEvent>
+#include <QMouseEvent>
 #include <QFileDialog>
 #include <QStandardPaths>
 #include <QDragEnterEvent>
@@ -56,6 +59,7 @@
 #include <QLinearGradient>
 #include <QTextStream>
 #include <QTextBrowser>
+#include <QTextEdit>
 #include <QTextDocument>
 #include <QRegularExpression>
 #include <QDir>
@@ -68,6 +72,7 @@
 #include <QFile>
 #include <QCryptographicHash>
 #include <QTimer>
+#include <QThreadPool>
 #include <QAudioSink>
 #include <QAudioSource>
 #include <QMediaDevices>
@@ -82,9 +87,211 @@
 #include <QPushButton>
 #include <QStyle>
 #include <QPointer>
+#include <QSharedPointer>
 #include <functional>
 #include <numeric>
 #include <algorithm>
+
+class ScrollingLabel final : public QLabel {
+public:
+    explicit ScrollingLabel(QWidget *parent = nullptr) : QLabel(parent) {
+        m_timer.setInterval(16);
+        connect(&m_timer, &QTimer::timeout, this, [this] {
+            if (m_lastText != text()) {
+                m_lastText = text();
+                m_offset = 0.0;
+                m_holdFrames = 65;
+            }
+            if (fontMetrics().horizontalAdvance(text()) <= contentsRect().width()) {
+                m_offset = 0.0;
+                update();
+                return;
+            }
+            if (m_holdFrames > 0) {
+                --m_holdFrames;
+            } else {
+                m_offset += 0.55;
+                const qreal cycle = fontMetrics().horizontalAdvance(text()) + 46.0;
+                if (m_offset >= cycle) {
+                    m_offset = 0.0;
+                    m_holdFrames = 38;
+                }
+            }
+            update();
+        });
+        m_timer.start();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override {
+        const QRect area = contentsRect();
+        const QFontMetrics metrics(font());
+        const int textWidth = metrics.horizontalAdvance(text());
+        if (textWidth <= area.width()) {
+            QLabel::paintEvent(event);
+            return;
+        }
+
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::TextAntialiasing);
+        painter.setClipRect(area);
+        painter.setFont(font());
+        painter.setPen(palette().color(QPalette::WindowText));
+        const qreal baseline = area.center().y()
+            + (metrics.ascent() - metrics.descent()) / 2.0;
+        const qreal firstX = area.left() - m_offset;
+        painter.drawText(QPointF(firstX, baseline), text());
+        painter.drawText(QPointF(firstX + textWidth + 46.0, baseline), text());
+    }
+
+private:
+    QTimer m_timer;
+    QString m_lastText;
+    qreal m_offset = 0.0;
+    int m_holdFrames = 65;
+};
+
+class LiquidGlassWidget final : public QWidget {
+public:
+    explicit LiquidGlassWidget(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setAttribute(Qt::WA_StyledBackground, true);
+        setMouseTracking(true);
+        m_lightPos = QPointF(0.25, 0.12);
+        m_timer.setInterval(16);
+        connect(&m_timer, &QTimer::timeout, this, [this] {
+            m_glow += (m_targetGlow - m_glow) * 0.18;
+            if (qAbs(m_glow - m_targetGlow) < 0.01) {
+                m_glow = m_targetGlow;
+                m_timer.stop();
+            }
+            update();
+        });
+        qApp->installEventFilter(this);
+    }
+
+    void setGlassEnabled(bool enabled, const QColor &accent) {
+        m_enabled = enabled;
+        m_accent = accent;
+        setAttribute(Qt::WA_StyledBackground, !enabled);
+        for (QWidget *child : findChildren<QWidget *>())
+            child->setMouseTracking(enabled);
+        update();
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (!m_enabled) return QWidget::eventFilter(watched, event);
+        auto *widget = qobject_cast<QWidget *>(watched);
+        if (!widget || (widget != this && !isAncestorOf(widget)))
+            return QWidget::eventFilter(watched, event);
+
+        if (event->type() == QEvent::MouseMove) {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            const QPoint local = mapFromGlobal(mouse->globalPosition().toPoint());
+            if (rect().contains(local) && width() > 0 && height() > 0) {
+                m_lightPos = QPointF(qBound(0.0, local.x() / qreal(width()), 1.0),
+                                     qBound(0.0, local.y() / qreal(height()), 1.0));
+                m_targetGlow = 1.0;
+                if (!m_timer.isActive()) m_timer.start();
+                update();
+            }
+        } else if (event->type() == QEvent::Leave) {
+            const QPoint local = mapFromGlobal(QCursor::pos());
+            if (!rect().contains(local)) {
+                m_targetGlow = 0.0;
+                if (!m_timer.isActive()) m_timer.start();
+            }
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
+    void paintEvent(QPaintEvent *event) override {
+        if (!m_enabled) {
+            QWidget::paintEvent(event);
+            return;
+        }
+
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const QRectF bounds = QRectF(rect()).adjusted(0.7, 0.7, -0.7, -0.7);
+        const qreal radius = qMin<qreal>(28.0, bounds.height() * 0.48);
+        QPainterPath glass;
+        glass.addRoundedRect(bounds, radius, radius);
+        painter.setClipPath(glass);
+
+        QLinearGradient body(bounds.topLeft(), bounds.bottomRight());
+        body.setColorAt(0.0, QColor(245, 251, 255, 58));
+        body.setColorAt(0.22, QColor(180, 220, 255, 31));
+        body.setColorAt(0.58, QColor(76, 112, 151, 48));
+        body.setColorAt(1.0, QColor(8, 20, 38, 112));
+        painter.fillPath(glass, body);
+
+        const QPointF glowCenter(
+            bounds.left() + m_lightPos.x() * bounds.width(),
+            bounds.top() + m_lightPos.y() * bounds.height());
+        QRadialGradient lens(glowCenter, qMax(bounds.width(), bounds.height()) * 0.72);
+        lens.setColorAt(0.0, QColor(255, 255, 255, 48 + int(m_glow * 55)));
+        lens.setColorAt(0.20, QColor(222, 242, 255, 27 + int(m_glow * 30)));
+        lens.setColorAt(0.55, QColor(m_accent.red(), m_accent.green(), m_accent.blue(),
+                                     8 + int(m_glow * 15)));
+        lens.setColorAt(1.0, Qt::transparent);
+        painter.fillPath(glass, lens);
+
+        QLinearGradient lowerLens(0, bounds.bottom() - radius, 0, bounds.bottom());
+        lowerLens.setColorAt(0.0, Qt::transparent);
+        lowerLens.setColorAt(0.64, QColor(m_accent.red(), m_accent.green(), m_accent.blue(), 13));
+        lowerLens.setColorAt(1.0, QColor(220, 240, 255, 34));
+        painter.fillRect(bounds, lowerLens);
+
+        painter.setClipping(false);
+        QLinearGradient rim(bounds.topLeft(), bounds.bottomRight());
+        rim.setColorAt(0.0, QColor(255, 255, 255, 185));
+        rim.setColorAt(0.28, QColor(230, 246, 255, 82));
+        rim.setColorAt(0.62, QColor(m_accent.red(), m_accent.green(), m_accent.blue(), 65));
+        rim.setColorAt(1.0, QColor(255, 255, 255, 38));
+        painter.setPen(QPen(rim, 1.25));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(glass);
+
+        const QRectF inner = bounds.adjusted(2.2, 2.2, -2.2, -2.2);
+        QPainterPath innerPath;
+        innerPath.addRoundedRect(inner, qMax<qreal>(1.0, radius - 2.2),
+                                 qMax<qreal>(1.0, radius - 2.2));
+        painter.setPen(QPen(QColor(255, 255, 255, 28), 0.8));
+        painter.drawPath(innerPath);
+    }
+
+    void enterEvent(QEnterEvent *event) override {
+        m_targetGlow = 1.0;
+        if (!m_timer.isActive()) m_timer.start();
+        QWidget::enterEvent(event);
+    }
+
+    void leaveEvent(QEvent *event) override {
+        m_targetGlow = 0.0;
+        if (!m_timer.isActive()) m_timer.start();
+        QWidget::leaveEvent(event);
+    }
+
+    void mouseMoveEvent(QMouseEvent *event) override {
+        if (width() > 0 && height() > 0) {
+            m_lightPos = QPointF(event->position().x() / width(),
+                                 event->position().y() / height());
+            update();
+        }
+        QWidget::mouseMoveEvent(event);
+    }
+
+private:
+    bool m_enabled = false;
+    QColor m_accent = QColor("#9ed7ff");
+    QPointF m_lightPos;
+    QTimer m_timer;
+    qreal m_glow = 0.0;
+    qreal m_targetGlow = 0.0;
+};
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -204,6 +411,7 @@ public:
     using QStyledItemDelegate::QStyledItemDelegate;
 
     void setTheme(const ThemePalette &theme) {
+        m_liquid = theme.id == "liquid";
         m_selectedBg = theme.surface2;
         m_hoverBg = theme.surface1;
         m_placeholderBg = theme.surface0;
@@ -220,6 +428,7 @@ public:
 
     void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const override {
         p->save();
+        p->setClipRect(opt.rect);
 
         if (opt.state & QStyle::State_Selected)
             p->fillRect(opt.rect, m_selectedBg);
@@ -230,8 +439,8 @@ public:
             p->fillRect(opt.rect, QColor(m_duplicate.red(), m_duplicate.green(),
                                          m_duplicate.blue(), 40));
 
-        const int iconSz = 36;
-        const int margin = 4;
+        const int iconSz = 32;
+        const int margin = 6;
         int textX = opt.rect.left() + 10;
 
         if (showIcons) {
@@ -255,11 +464,37 @@ public:
                 p->setRenderHint(QPainter::SmoothPixmapTransform);
                 p->drawPixmap(ir, rounded);
             } else {
-                p->setPen(Qt::NoPen);
-                p->setBrush(m_placeholderBg);
                 p->setRenderHint(QPainter::Antialiasing);
-                p->drawRoundedRect(ir, 5, 5);
-                Ico::music(m_muted, 20).paint(p, ir, Qt::AlignCenter);
+                if (m_liquid) {
+                    QPainterPath tile;
+                    tile.addRoundedRect(QRectF(ir).adjusted(0.5, 0.5, -0.5, -0.5), 8, 8);
+                    QLinearGradient glass(ir.topLeft(), ir.bottomRight());
+                    glass.setColorAt(0.0, QColor(230, 247, 255, 88));
+                    glass.setColorAt(0.35, QColor(m_accent.red(), m_accent.green(),
+                                                  m_accent.blue(), 62));
+                    glass.setColorAt(1.0, QColor(12, 37, 66, 175));
+                    p->setPen(QPen(QColor(235, 249, 255, 145), 1));
+                    p->setBrush(glass);
+                    p->drawPath(tile);
+                    const qreal barW = 2.7;
+                    const qreal gap = 2.2;
+                    const qreal heights[] = {7.0, 13.0, 18.0, 13.0, 7.0};
+                    const qreal total = 5.0 * barW + 4.0 * gap;
+                    const qreal start = ir.center().x() - total / 2.0;
+                    p->setPen(Qt::NoPen);
+                    p->setBrush(QColor(225, 247, 255, 235));
+                    for (int bar = 0; bar < 5; ++bar) {
+                        const qreal h = heights[bar];
+                        p->drawRoundedRect(QRectF(start + bar * (barW + gap),
+                                                  ir.center().y() - h / 2.0,
+                                                  barW, h), 1.35, 1.35);
+                    }
+                } else {
+                    p->setPen(Qt::NoPen);
+                    p->setBrush(m_placeholderBg);
+                    p->drawRoundedRect(ir, 5, 5);
+                    Ico::music(m_muted, 18).paint(p, ir, Qt::AlignCenter);
+                }
             }
             textX = ir.right() + 8;
         }
@@ -286,6 +521,7 @@ public:
     }
 
 private:
+    bool m_liquid = false;
     QColor m_selectedBg {0x45,0x47,0x5a};
     QColor m_hoverBg {0x2a,0x2b,0x3d};
     QColor m_placeholderBg {0x31,0x32,0x44};
@@ -491,7 +727,82 @@ void MainWindow::setupUi() {
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    m_topWidget = new QWidget(this);
+    m_contentShell = new QWidget(this);
+    m_contentShell->setObjectName("contentShell");
+    auto *shellLayout = new QHBoxLayout(m_contentShell);
+    shellLayout->setContentsMargins(0, 0, 0, 0);
+    shellLayout->setSpacing(0);
+
+    m_modernSidebar = new LiquidGlassWidget(this);
+    m_modernSidebar->setObjectName("modernSidebar");
+    m_modernSidebar->setFixedWidth(190);
+    auto *sidebarLayout = new QVBoxLayout(m_modernSidebar);
+    sidebarLayout->setContentsMargins(14, 16, 14, 14);
+    sidebarLayout->setSpacing(7);
+
+    auto *brandRow = new QHBoxLayout;
+    brandRow->setContentsMargins(2, 0, 2, 12);
+    brandRow->setSpacing(9);
+    m_modernBrandIcon = new QLabel(m_modernSidebar);
+    m_modernBrandIcon->setFixedSize(34, 34);
+    m_modernBrandIcon->setPixmap(
+        createLogo(34, ThemeManager::palette("mocha"), m_cfg.appIconStyle));
+    m_modernBrandIcon->setScaledContents(true);
+    auto *brandText = new QLabel("EchoBox II", m_modernSidebar);
+    brandText->setObjectName("modernBrand");
+    brandRow->addWidget(m_modernBrandIcon);
+    brandRow->addWidget(brandText);
+    brandRow->addStretch();
+    sidebarLayout->addLayout(brandRow);
+
+    auto makeNavButton = [this](const QString &text, const QIcon &icon) {
+        auto *button = new QToolButton(m_modernSidebar);
+        button->setObjectName("modernNavButton");
+        button->setText(text);
+        button->setIcon(icon);
+        button->setIconSize({18, 18});
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        button->setFixedHeight(38);
+        return button;
+    };
+    const QColor navColor(0xa6, 0xad, 0xc8);
+    m_modernHomeBtn = makeNavButton("Главная", Ico::music(navColor, 18));
+    m_modernHomeBtn->setCheckable(true);
+    m_modernHomeBtn->setChecked(true);
+    m_modernSearchBtn = makeNavButton("Поиск", Ico::sliders(navColor, 18));
+    m_modernPlaylistsBtn = makeNavButton("Плейлисты", Ico::music(navColor, 18));
+    m_modernLibraryBtn = makeNavButton("Библиотека", Ico::folder(navColor, 18));
+    m_modernOpenBtn = makeNavButton("Добавить музыку", Ico::download(navColor, 18));
+    m_modernFolderBtn = makeNavButton("Открыть папку", Ico::folder(navColor, 18));
+    m_modernLinkBtn = makeNavButton("Музыка по ссылке", Ico::link(navColor, 18));
+    sidebarLayout->addWidget(m_modernHomeBtn);
+    sidebarLayout->addWidget(m_modernSearchBtn);
+    sidebarLayout->addSpacing(8);
+    auto *libraryTitle = new QLabel("Моя музыка", m_modernSidebar);
+    libraryTitle->setObjectName("modernSectionTitle");
+    sidebarLayout->addWidget(libraryTitle);
+    sidebarLayout->addWidget(m_modernPlaylistsBtn);
+    sidebarLayout->addWidget(m_modernLibraryBtn);
+    sidebarLayout->addWidget(m_modernOpenBtn);
+    sidebarLayout->addWidget(m_modernFolderBtn);
+    sidebarLayout->addWidget(m_modernLinkBtn);
+    sidebarLayout->addStretch();
+    m_modernSettingsBtn = makeNavButton("Настройки", Ico::sliders(navColor, 18));
+    sidebarLayout->addWidget(m_modernSettingsBtn);
+    m_modernSidebar->hide();
+
+    m_mainColumn = new QWidget(this);
+    m_mainColumn->setObjectName("modernMainColumn");
+    m_mainColumnLayout = new QVBoxLayout(m_mainColumn);
+    m_mainColumnLayout->setContentsMargins(0, 0, 0, 0);
+    m_mainColumnLayout->setSpacing(0);
+    shellLayout->addWidget(m_modernSidebar);
+    shellLayout->addWidget(m_mainColumn, 1);
+    root->addWidget(m_contentShell, 1);
+
+    m_topWidget = new LiquidGlassWidget(this);
+    m_topWidget->setObjectName("topWidget");
     QHBoxLayout *topL = new QHBoxLayout(m_topWidget);
     topL->setContentsMargins(14, 14, 14, 10);
     topL->setSpacing(18);
@@ -669,14 +980,14 @@ void MainWindow::setupUi() {
     rl->addSpacing(4);
 
     topL->addWidget(rp, 1);
-    root->addWidget(m_topWidget);
+    m_mainColumnLayout->addWidget(m_topWidget);
 
     m_separator = new QFrame(this);
     m_separator->setFrameShape(QFrame::HLine);
     m_separator->setObjectName("separator");
-    root->addWidget(m_separator);
+    m_mainColumnLayout->addWidget(m_separator);
 
-    m_miniBar = new QWidget(this);
+    m_miniBar = new LiquidGlassWidget(this);
     m_miniBar->setObjectName("miniBar");
     m_miniBar->setAutoFillBackground(false);
     m_miniBar->hide();
@@ -703,9 +1014,10 @@ void MainWindow::setupUi() {
     m_miniNextBtn = new QToolButton(this); m_miniNextBtn->setObjectName("ctrlBtn"); m_miniNextBtn->setFixedSize(28,28);
     m_miniNextBtn->setIcon(Ico::next(mc,16)); m_miniNextBtn->setIconSize({16,16});
 
-    m_miniTitle = new QLabel("EchoBox II", this);
+    m_miniTitle = new ScrollingLabel(this);
+    m_miniTitle->setText("EchoBox II");
     m_miniTitle->setObjectName("miniTitle");
-    m_miniTitle->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_miniTitle->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
 
     m_miniShuffleBtn = new QToolButton(this); m_miniShuffleBtn->setObjectName("toggleBtn");
     m_miniShuffleBtn->setFixedSize(26,26); m_miniShuffleBtn->setCheckable(true);
@@ -714,6 +1026,47 @@ void MainWindow::setupUi() {
     m_miniRepeatBtn = new QToolButton(this); m_miniRepeatBtn->setObjectName("toggleBtn");
     m_miniRepeatBtn->setFixedSize(26,26); m_miniRepeatBtn->setCheckable(true);
     m_miniRepeatBtn->setIcon(Ico::repeatAll(tc,15)); m_miniRepeatBtn->setIconSize({15,15});
+
+    m_miniMoreBtn = new QToolButton(this);
+    m_miniMoreBtn->setObjectName("moreBtn");
+    m_miniMoreBtn->setFixedSize(30, 30);
+    m_miniMoreBtn->setIcon(MaterialIco::icon("more_horiz", tc, 19));
+    m_miniMoreBtn->setIconSize({19, 19});
+    m_miniMoreBtn->setToolTip("Дополнительные функции");
+    m_miniMoreBtn->hide();
+
+    m_miniMoreMenu = new QMenu(this);
+    m_miniMoreMenu->setObjectName("liquidMoreMenu");
+    m_miniStopAct = m_miniMoreMenu->addAction(
+        Ico::stop(tc, 16), "Стоп", this, &MainWindow::stop);
+    m_miniShuffleAct = m_miniMoreMenu->addAction(
+        Ico::shuffle(tc, 16), "Перемешивание", this, &MainWindow::toggleShuffle);
+    m_miniShuffleAct->setCheckable(true);
+    m_miniRepeatAct = m_miniMoreMenu->addAction(
+        Ico::repeatAll(tc, 16), "Повтор: выключен", this, &MainWindow::cycleRepeat);
+    m_miniRepeatAct->setCheckable(true);
+    m_miniMoreMenu->addSeparator();
+    m_miniSpeedMenu = m_miniMoreMenu->addMenu(
+        Ico::equalizer(tc, 16), "Скорость · 1.0×");
+    auto *miniSpeedGroup = new QActionGroup(m_miniSpeedMenu);
+    miniSpeedGroup->setExclusive(true);
+    const QStringList miniSpeedLabels = {"0.5×", "0.75×", "1.0×", "1.25×", "1.5×", "2.0×"};
+    for (int i = 0; i < miniSpeedLabels.size(); ++i) {
+        QAction *action = m_miniSpeedMenu->addAction(miniSpeedLabels[i]);
+        action->setCheckable(true);
+        action->setData(i);
+        miniSpeedGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, i] {
+            m_speedCombo->setCurrentIndex(i);
+        });
+    }
+    connect(m_miniMoreMenu, &QMenu::aboutToShow, this, [this] {
+        const int speedIndex = m_speedCombo->currentIndex();
+        for (QAction *action : m_miniSpeedMenu->actions())
+            action->setChecked(action->data().toInt() == speedIndex);
+        m_miniShuffleAct->setChecked(m_shuffle);
+        m_miniSpeedMenu->setTitle("Скорость · " + m_speedCombo->currentText());
+    });
 
     m_miniMuteBtn = new QToolButton(this); m_miniMuteBtn->setObjectName("muteBtn");
     m_miniMuteBtn->setFixedSize(24,24);
@@ -747,31 +1100,48 @@ void MainWindow::setupUi() {
 
     m_miniWaveform = new WaveformSlider(this);
     m_miniWaveform->setFixedHeight(36);
-    m_miniWaveform->setMinimumWidth(80);
+    m_miniWaveform->setMinimumWidth(160);
     m_miniWaveform->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     m_miniLoadingPanel = new QWidget(this);
     m_miniLoadingPanel->setObjectName("miniLoadingPanel");
     auto *miniLoadingLayout = new QHBoxLayout(m_miniLoadingPanel);
-    miniLoadingLayout->setContentsMargins(9, 5, 9, 5);
-    miniLoadingLayout->setSpacing(7);
+    miniLoadingLayout->setContentsMargins(10, 6, 10, 6);
+    miniLoadingLayout->setSpacing(8);
     m_miniLoadingIcon = new QLabel(m_miniLoadingPanel);
     m_miniLoadingIcon->setObjectName("miniLoadingIcon");
     m_miniLoadingIcon->setAlignment(Qt::AlignCenter);
-    m_miniLoadingIcon->setFixedWidth(16);
+    m_miniLoadingIcon->setFixedSize(22, 22);
     m_miniLoadingIcon->setPixmap(Ico::download(tc, 14).pixmap(14, 14));
+    auto *miniLoadingBody = new QVBoxLayout;
+    miniLoadingBody->setContentsMargins(0, 0, 0, 0);
+    miniLoadingBody->setSpacing(4);
+    auto *miniLoadingHeader = new QHBoxLayout;
+    miniLoadingHeader->setContentsMargins(0, 0, 0, 0);
+    miniLoadingHeader->setSpacing(8);
+    m_miniLoadingText = new QLabel("Загрузка трека", m_miniLoadingPanel);
+    m_miniLoadingText->setObjectName("miniLoadingText");
+    m_miniLoadingText->setMinimumWidth(130);
+    m_miniLoadingText->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_miniLoadingText->setTextInteractionFlags(Qt::NoTextInteraction);
     m_miniLoadingBar = new QProgressBar(m_miniLoadingPanel);
     m_miniLoadingBar->setObjectName("miniLoadingBar");
     m_miniLoadingBar->setRange(0, 0);
     m_miniLoadingBar->setTextVisible(false);
-    m_miniLoadingBar->setFixedSize(82, 6);
+    m_miniLoadingBar->setFixedHeight(5);
+    m_miniLoadingBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_miniLoadingPercent = new QLabel(QString::fromUtf8("•••"), m_miniLoadingPanel);
     m_miniLoadingPercent->setObjectName("miniLoadingPercent");
     m_miniLoadingPercent->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    m_miniLoadingPercent->setFixedWidth(34);
-    miniLoadingLayout->addWidget(m_miniLoadingIcon);
-    miniLoadingLayout->addWidget(m_miniLoadingBar);
-    miniLoadingLayout->addWidget(m_miniLoadingPercent);
+    m_miniLoadingPercent->setFixedWidth(38);
+    miniLoadingHeader->addWidget(m_miniLoadingText, 1);
+    miniLoadingHeader->addWidget(m_miniLoadingPercent);
+    miniLoadingBody->addLayout(miniLoadingHeader);
+    miniLoadingBody->addWidget(m_miniLoadingBar);
+    miniLoadingLayout->addWidget(m_miniLoadingIcon, 0, Qt::AlignVCenter);
+    miniLoadingLayout->addLayout(miniLoadingBody, 1);
+    m_miniLoadingPanel->setMinimumWidth(270);
+    m_miniLoadingPanel->setMaximumWidth(360);
     m_miniLoadingPanel->setVisible(false);
 
     miniL->addWidget(m_miniAlbumArt);
@@ -784,6 +1154,7 @@ void MainWindow::setupUi() {
     miniL->addWidget(m_miniWaveform, 1);
     miniL->addWidget(m_miniShuffleBtn);
     miniL->addWidget(m_miniRepeatBtn);
+    miniL->addWidget(m_miniMoreBtn);
     miniL->addSpacing(4);
     miniL->addWidget(m_miniMuteBtn);
     miniL->addWidget(m_miniVolSlider);
@@ -803,6 +1174,7 @@ void MainWindow::setupUi() {
     connect(m_miniPlayBtn,    &QToolButton::clicked, this, &MainWindow::togglePlayPause);
     connect(m_miniShuffleBtn, &QToolButton::clicked, this, &MainWindow::toggleShuffle);
     connect(m_miniRepeatBtn,  &QToolButton::clicked, this, &MainWindow::cycleRepeat);
+    connect(m_miniMoreBtn,    &QToolButton::clicked, this, &MainWindow::showMiniMoreMenu);
     connect(m_miniMuteBtn,    &QToolButton::clicked, this, &MainWindow::toggleMute);
     connect(m_miniVolSlider,  &QSlider::valueChanged, this, &MainWindow::setVolume);
 
@@ -810,7 +1182,8 @@ void MainWindow::setupUi() {
     m_miniTitle->installEventFilter(this);
     m_miniAlbumArt->installEventFilter(this);
 
-    m_playlistPanel = new QWidget(this);
+    m_playlistPanel = new LiquidGlassWidget(this);
+    m_playlistPanel->setObjectName("playlistPanel");
     QVBoxLayout *plL = new QVBoxLayout(m_playlistPanel);
     plL->setContentsMargins(12, 0, 12, 10);
     plL->setSpacing(4);
@@ -822,21 +1195,22 @@ void MainWindow::setupUi() {
 
         m_tabBar = new QTabBar(this);
         m_tabBar->setObjectName("playlistTabBar");
+        m_tabBar->setIconSize({18, 18});
         m_tabBar->setExpanding(false);
         m_tabBar->setMovable(false);
         m_tabBar->addTab("Плейлист 1");
 
-        auto *newPlBtn = new QToolButton(this);
-        newPlBtn->setText("+");
-        newPlBtn->setObjectName("smallBtn");
-        newPlBtn->setFixedSize(26, 26);
-        newPlBtn->setToolTip("Новый плейлист");
+        m_newPlaylistBtn = new QToolButton(this);
+        m_newPlaylistBtn->setText("+");
+        m_newPlaylistBtn->setObjectName("smallBtn");
+        m_newPlaylistBtn->setFixedSize(32, 32);
+        m_newPlaylistBtn->setToolTip("Новый плейлист");
 
         tabRow->addWidget(m_tabBar, 1, Qt::AlignTop);
-        tabRow->addWidget(newPlBtn, 0, Qt::AlignTop);
+        tabRow->addWidget(m_newPlaylistBtn, 0, Qt::AlignTop);
         plL->addLayout(tabRow);
 
-        connect(newPlBtn, &QToolButton::clicked, this, &MainWindow::newPlaylist);
+        connect(m_newPlaylistBtn, &QToolButton::clicked, this, &MainWindow::newPlaylist);
         connect(m_tabBar, &QTabBar::currentChanged,      this, &MainWindow::onTabChanged);
         connect(m_tabBar, &QTabBar::tabBarDoubleClicked, this, &MainWindow::onTabDoubleClicked);
         m_tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -845,6 +1219,7 @@ void MainWindow::setupUi() {
     }
 
     m_playlists.append({"Плейлист 1", {}, -1});
+    m_tabBar->setTabIcon(0, playlistIcon(0, 18));
 
     QHBoxLayout *plH = new QHBoxLayout;
     m_searchEdit = new QLineEdit(this);
@@ -857,8 +1232,8 @@ void MainWindow::setupUi() {
 
     auto mkSmall = [this](const QIcon &icon, const QString &tip) {
         auto *b = new QToolButton(this);
-        b->setIcon(icon); b->setIconSize({15, 15}); b->setToolTip(tip);
-        b->setObjectName("smallBtn"); b->setFixedSize(26, 26);
+        b->setIcon(icon); b->setIconSize({18, 18}); b->setToolTip(tip);
+        b->setObjectName("smallBtn"); b->setFixedSize(32, 32);
         return b;
     };
     const QColor smallIconColor(0xa6, 0xad, 0xc8);
@@ -868,9 +1243,9 @@ void MainWindow::setupUi() {
 
     m_playlistClearBtn = new QToolButton(this);
     m_playlistClearBtn->setObjectName("clearBtn");
-    m_playlistClearBtn->setFixedSize(26, 26);
+    m_playlistClearBtn->setFixedSize(32, 32);
     m_playlistClearBtn->setIcon(Ico::trash(smallIconColor, 15));
-    m_playlistClearBtn->setIconSize({15, 15});
+    m_playlistClearBtn->setIconSize({18, 18});
     m_playlistClearBtn->setToolTip("Очистить плейлист");
 
     plH->addWidget(m_searchEdit, 1);
@@ -889,7 +1264,29 @@ void MainWindow::setupUi() {
     m_playlistWidget->setItemDelegate(g_delegate);
     m_playlistWidget->setIconSize({36, 36});
     plL->addWidget(m_playlistWidget, 1);
-    root->addWidget(m_playlistPanel, 1);
+    m_mainColumnLayout->addWidget(m_playlistPanel, 1);
+
+    connect(m_modernHomeBtn, &QToolButton::clicked, this, [this] {
+        showPlaylistTracks();
+        m_searchEdit->clear();
+        if (m_tabBar->count() > 0) m_tabBar->setCurrentIndex(0);
+        m_playlistWidget->setFocus();
+    });
+    connect(m_modernSearchBtn, &QToolButton::clicked, this, [this] {
+        showSearchOverlay();
+    });
+    connect(m_modernPlaylistsBtn, &QToolButton::clicked,
+            this, &MainWindow::showPlaylistBrowser);
+    connect(m_modernLibraryBtn, &QToolButton::clicked, this, [this] {
+        if (m_libraryPlIdx >= 0 && m_libraryPlIdx < m_tabBar->count())
+            m_tabBar->setCurrentIndex(m_libraryPlIdx);
+        else
+            scanLibrary();
+    });
+    connect(m_modernOpenBtn, &QToolButton::clicked, this, &MainWindow::openFiles);
+    connect(m_modernFolderBtn, &QToolButton::clicked, this, &MainWindow::openFolder);
+    connect(m_modernLinkBtn, &QToolButton::clicked, this, &MainWindow::openUrlDialog);
+    connect(m_modernSettingsBtn, &QToolButton::clicked, this, &MainWindow::openSettings);
 
     connect(m_playlistUpBtn, &QToolButton::clicked, this, &MainWindow::moveTrackUp);
     connect(m_playlistDownBtn, &QToolButton::clicked, this, &MainWindow::moveTrackDown);
@@ -952,8 +1349,9 @@ void MainWindow::setupConnections() {
         m_seeking = false;
     });
     connect(m_seekSlider, &WaveformSlider::peaksReady, this,
-            [this](const QUrl &url, const QVector<float> &peaks) {
-        if (m_player->source() == url) m_miniWaveform->setPeaks(peaks);
+            [this](const QUrl &url, qint64 duration, const QVector<float> &peaks) {
+        m_waveformCache.rememberPartial(url, duration, peaks);
+        if (m_player->source() == url) m_miniWaveform->setPartialPeaks(peaks);
     });
     connect(m_seekSlider, &WaveformSlider::waveformReady,
             this, &MainWindow::onWaveformReady);
@@ -988,6 +1386,13 @@ void MainWindow::setupConnections() {
 }
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *ev) {
+    if (obj == m_searchPopupEdit && ev->type() == QEvent::KeyPress) {
+        auto *key = static_cast<QKeyEvent *>(ev);
+        if (key->key() == Qt::Key_Escape) {
+            hideSearchOverlay();
+            return true;
+        }
+    }
     if (obj == m_timeLabel && ev->type() == QEvent::MouseButtonPress) {
         toggleRemainingTime();
         return true;
@@ -1013,6 +1418,7 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *ev) {
 
 void MainWindow::applyTheme() {
     const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+    const bool liquidGlass = theme.id == "liquid";
     const QColor ac = theme.accent;
     const QString acH = ac.name();
     const QString acL = ac.lighter(112).name();
@@ -1044,6 +1450,38 @@ void MainWindow::applyTheme() {
         }
         QWidget#miniBar {
             background-color: transparent;
+        }
+        QWidget#contentShell, QWidget#modernMainColumn { background: transparent; }
+        QWidget#modernSidebar {
+            background-color: #181825;
+            border-right: 1px solid #313244;
+        }
+        QLabel#modernBrand { color: #cdd6f4; font-size: 15px; font-weight: 700; }
+        QLabel#modernSectionTitle {
+            color: #6c7086;
+            padding: 6px 7px 2px 7px;
+            font-size: 10px;
+            font-weight: 700;
+        }
+        QToolButton#modernNavButton {
+            color: #a6adc8;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 9px;
+            padding: 0 10px;
+            text-align: left;
+            font-size: 12px;
+        }
+        QToolButton#modernNavButton:hover {
+            color: #cdd6f4;
+            background-color: #313244;
+            border-color: #45475a;
+        }
+        QToolButton#modernNavButton:checked {
+            color: ACCENT;
+            background-color: #313244;
+            border-color: #45475a;
+            font-weight: 700;
         }
         QMenuBar {
             background-color: #181825;
@@ -1092,6 +1530,11 @@ void MainWindow::applyTheme() {
         QLabel#loadingText {
             color: #cdd6f4;
             font-size: 13px;
+            font-weight: 600;
+        }
+        QLabel#miniLoadingText {
+            color: #cdd6f4;
+            font-size: 11px;
             font-weight: 600;
         }
         QLabel#loadingPercent, QLabel#miniLoadingPercent {
@@ -1411,6 +1854,47 @@ void MainWindow::applyTheme() {
             color: ACCENT;
             font-weight: bold;
         }
+        QLabel#playlistBrowserTitle {
+            color: #cdd6f4;
+            font-size: 20px;
+            font-weight: 700;
+        }
+        QLabel#playlistBrowserSubtitle { color: #7f849c; }
+        QLabel#playlistCoverPreview {
+            background-color: #181825;
+            border: 1px solid #45475a;
+            border-radius: 18px;
+            padding: 5px;
+        }
+        QListWidget#playlistBrowserGrid {
+            background-color: #181825;
+            border: 1px solid #313244;
+            border-radius: 16px;
+            outline: none;
+            padding: 10px;
+        }
+        QListWidget#playlistBrowserGrid::item {
+            color: #a6adc8;
+            border: 1px solid transparent;
+            border-radius: 14px;
+            padding: 8px;
+        }
+        QListWidget#playlistBrowserGrid::item:hover:!selected {
+            color: #cdd6f4;
+            background-color: #24243a;
+            border-color: #313244;
+        }
+        QListWidget#playlistBrowserGrid::item:selected {
+            color: #cdd6f4;
+            background-color: #313244;
+            border-color: ACCENT;
+        }
+        QPushButton#playlistBrowserOpen {
+            color: #1e1e2e;
+            background-color: ACCENT;
+            border-color: ACCENT;
+            font-weight: 700;
+        }
 
         QStackedWidget#settingsStack { background-color: #1e1e2e; }
         QScrollArea#appearanceScroll {
@@ -1505,6 +1989,243 @@ void MainWindow::applyTheme() {
     ss.replace("FONTPX",      QString::number(fs) + "px");
     ss.replace("FONTFAMILY",  family);
 
+    if (liquidGlass) {
+        ss += R"(
+            QWidget#topWidget {
+                background: transparent;
+                border: none;
+                margin: 8px 10px 6px 10px;
+            }
+            QWidget#playlistPanel {
+                background: transparent;
+                border: none;
+                margin: 0px;
+            }
+            QWidget#modernSidebar {
+                background: transparent;
+                border: none;
+            }
+            QWidget#miniBar {
+                background: transparent;
+                border: none;
+            }
+            QMenuBar, QWidget#settingsHeader, QWidget#settingsSidebarWrap,
+            QWidget#settingsFooter, QWidget#aboutFooter {
+                background-color: rgba(14,29,52,225);
+                border-color: rgba(205,232,255,70);
+            }
+            QMenu, QDialog, QStackedWidget#settingsStack,
+            QScrollArea#appearanceScroll, QWidget#appearanceScrollContent {
+                background-color: rgba(17,34,59,245);
+                border-color: rgba(205,232,255,72);
+            }
+            QDialog#settingsDialog {
+                background-color: rgba(8,22,40,248);
+            }
+            QWidget#settingsHeader {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(145,207,255,32), stop:1 rgba(15,37,64,218));
+                border-bottom: 1px solid rgba(235,249,255,72);
+            }
+            QLabel#settingsTitle {
+                color: rgba(245,251,255,250);
+                font-size: 21px;
+                font-weight: 700;
+            }
+            QLabel#settingsSubtitle {
+                color: rgba(184,216,240,205);
+                font-size: 12px;
+            }
+            QWidget#settingsSidebarWrap {
+                background-color: rgba(8,24,43,190);
+                border-right: 1px solid rgba(235,249,255,52);
+            }
+            QListWidget#settingsSidebar::item {
+                color: rgba(196,221,240,220);
+                margin: 3px 1px;
+                padding-left: 13px;
+                border: 1px solid transparent;
+                border-radius: 13px;
+            }
+            QListWidget#settingsSidebar::item:hover:!selected {
+                color: #f1f9ff;
+                background-color: rgba(165,215,255,25);
+                border-color: rgba(235,249,255,40);
+            }
+            QListWidget#settingsSidebar::item:selected {
+                color: #f5fbff;
+                background-color: rgba(158,215,255,48);
+                border-color: rgba(235,249,255,100);
+            }
+            QWidget#settingsSectionHeader {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(193,228,255,27), stop:1 rgba(70,125,175,16));
+                border: 1px solid rgba(225,243,255,52);
+                border-radius: 12px;
+            }
+            QLabel#settingsHead {
+                color: rgba(239,248,255,246);
+                font-size: 13px;
+                font-weight: 650;
+            }
+            QFrame#settingsSep {
+                color: transparent;
+                background: transparent;
+                border: none;
+                min-height: 7px;
+                max-height: 7px;
+            }
+            QWidget#settingsFooter {
+                background-color: rgba(8,24,43,225);
+                border-top: 1px solid rgba(235,249,255,58);
+            }
+            QDialog#settingsDialog QLineEdit,
+            QDialog#settingsDialog QComboBox,
+            QDialog#settingsDialog QFontComboBox,
+            QDialog#settingsDialog QTextEdit {
+                min-height: 32px;
+                background-color: rgba(7,21,39,125);
+                border: 1px solid rgba(225,243,255,65);
+                border-radius: 11px;
+                padding: 4px 10px;
+                selection-background-color: ACCENT;
+            }
+            QDialog#settingsDialog QLineEdit:focus,
+            QDialog#settingsDialog QComboBox:focus,
+            QDialog#settingsDialog QTextEdit:focus {
+                background-color: rgba(10,29,51,170);
+                border-color: ACCENT;
+            }
+            QPushButton#settingsOkBtn {
+                min-height: 34px;
+                border-radius: 12px;
+                padding: 5px 20px;
+            }
+            QListWidget#playlist, QListWidget#appIconGrid,
+            QListWidget#playlistBrowserGrid, QLineEdit,
+            QComboBox, QLineEdit#searchEdit, QComboBox#speedCombo,
+            QWidget#loadingBanner, QWidget#miniLoadingPanel {
+                background-color: rgba(11,27,48,92);
+                border: 1px solid rgba(225,243,255,98);
+                border-radius: 12px;
+            }
+            QListWidget#playlist {
+                alternate-background-color: rgba(85,145,205,18);
+            }
+            QListWidget#playlist::item {
+                margin: 2px 1px;
+                padding: 8px 10px;
+                border-radius: 9px;
+            }
+            QListWidget#playlist::item:hover:!selected {
+                background-color: rgba(150,205,255,32);
+            }
+            QListWidget#playlist::item:selected {
+                background-color: rgba(158,215,255,58);
+            }
+            QToolButton#ctrlBtn, QToolButton#toggleBtn, QToolButton#smallBtn,
+            QToolButton#clearBtn, QToolButton#moreBtn, QPushButton {
+                background-color: rgba(130,180,225,24);
+                border: 1px solid rgba(210,235,255,58);
+                border-radius: 10px;
+            }
+            QToolButton#ctrlBtn:hover, QToolButton#toggleBtn:hover,
+            QToolButton#smallBtn:hover, QToolButton#moreBtn:hover, QPushButton:hover {
+                background-color: rgba(165,215,255,48);
+                border-color: rgba(225,242,255,105);
+            }
+            QMenu#liquidMoreMenu {
+                background-color: rgba(13,31,55,248);
+                border: 1px solid rgba(225,243,255,100);
+                border-radius: 14px;
+                padding: 7px;
+            }
+            QMenu#liquidMoreMenu::item {
+                min-width: 178px;
+                padding: 9px 30px 9px 27px;
+                margin: 2px;
+                border-radius: 9px;
+            }
+            QMenu#liquidMoreMenu::item:selected {
+                background-color: rgba(158,215,255,45);
+                border: 1px solid rgba(225,243,255,70);
+            }
+            QMenu#liquidMoreMenu::separator {
+                height: 1px;
+                background-color: rgba(225,243,255,38);
+                margin: 6px 8px;
+            }
+            QToolButton#modernNavButton:hover,
+            QToolButton#modernNavButton:checked {
+                background-color: rgba(158,215,255,34);
+                border-color: rgba(210,235,255,64);
+            }
+            QToolButton#modernNavButton {
+                border: none;
+                border-bottom: 1px solid rgba(225,243,255,24);
+                border-radius: 10px;
+            }
+            QToolButton#modernNavButton:hover,
+            QToolButton#modernNavButton:checked {
+                border: 1px solid rgba(225,243,255,86);
+            }
+            QWidget#searchPopup {
+                background: transparent;
+                border: none;
+            }
+            QLineEdit#searchPopupEdit {
+                background-color: rgba(8,22,40,105);
+                border: 1px solid rgba(235,249,255,125);
+                border-radius: 14px;
+                padding: 9px 13px;
+                font-size: 15px;
+            }
+            QWidget#miniLoadingPanel {
+                background-color: rgba(9,25,45,112);
+                border: 1px solid rgba(235,249,255,108);
+                border-radius: 15px;
+            }
+            QLabel#miniLoadingIcon {
+                background-color: rgba(185,225,255,30);
+                border: 1px solid rgba(235,249,255,70);
+                border-radius: 10px;
+            }
+            QLabel#miniLoadingText {
+                color: rgba(242,249,255,245);
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QLabel#miniLoadingPercent {
+                color: rgba(205,235,255,220);
+                font-size: 11px;
+            }
+            QProgressBar#miniLoadingBar {
+                background-color: rgba(210,235,255,25);
+                border: 1px solid rgba(225,243,255,34);
+                border-radius: 3px;
+            }
+            QProgressBar#miniLoadingBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 ACCENT, stop:0.55 #8fdcff, stop:1 #d8f4ff);
+                border-radius: 3px;
+            }
+            QTabBar#playlistTabBar::tab {
+                background-color: rgba(100,145,190,20);
+                border-color: rgba(210,235,255,55);
+                border-radius: 10px;
+                padding: 6px 18px;
+            }
+            QTabBar#playlistTabBar::tab:selected {
+                background-color: rgba(158,215,255,42);
+                border-color: rgba(210,235,255,90);
+            }
+            QStatusBar {
+                background-color: rgba(11,25,45,220);
+                border-top-color: rgba(210,235,255,58);
+            }
+        )";
+    }
+
     static QString s_checkUri, s_dotUri, s_dashUri;
     if (s_checkUri.isEmpty()) {
         const QString tmp = QDir::tempPath();
@@ -1534,9 +2255,26 @@ void MainWindow::applyTheme() {
 
     setStyleSheet(ss);
 
+    if (auto *glass = dynamic_cast<LiquidGlassWidget *>(m_modernSidebar))
+        glass->setGlassEnabled(liquidGlass, theme.accent);
+    if (auto *glass = dynamic_cast<LiquidGlassWidget *>(m_miniBar))
+        glass->setGlassEnabled(liquidGlass, theme.accent);
+    if (auto *glass = dynamic_cast<LiquidGlassWidget *>(m_topWidget))
+        glass->setGlassEnabled(liquidGlass, theme.accent);
+    if (auto *glass = dynamic_cast<LiquidGlassWidget *>(m_playlistPanel))
+        glass->setGlassEnabled(liquidGlass, theme.accent);
+    if (auto *glass = dynamic_cast<LiquidGlassWidget *>(m_searchPopup))
+        glass->setGlassEnabled(liquidGlass, theme.accent);
 
-    m_mediaStack->setStyleSheet(QString(
-        "QWidget#mediaStack{background-color:%1;}").arg(theme.mantle.name()));
+
+    if (liquidGlass) {
+        m_mediaStack->setStyleSheet(
+            "QWidget#mediaStack{background-color:rgba(12,27,48,175);"
+            "border:1px solid rgba(210,235,255,78);border-radius:18px;}");
+    } else {
+        m_mediaStack->setStyleSheet(QString(
+            "QWidget#mediaStack{background-color:%1;}").arg(theme.mantle.name()));
+    }
     updateAlbumArt();
 
     if (m_aurora) {
@@ -1550,7 +2288,7 @@ void MainWindow::applyTheme() {
             {theme.teal, theme.accent2, theme.accent, theme.danger});
         m_visualizer->setVisible(m_cfg.showVisualizer);
     }
-    statusBar()->setVisible(m_cfg.showStatusBar);
+    statusBar()->setVisible(!m_miniPlayer && !m_cfg.modernLayout && m_cfg.showStatusBar);
 
     QFont f = font(); f.setPointSize(fs); setFont(f);
 
@@ -1558,14 +2296,18 @@ void MainWindow::applyTheme() {
     const bool playing = m_player && m_player->playbackState() == QMediaPlayer::PlayingState;
 
     if (m_playPauseBtn) {
-        m_playPauseBtn->setIcon(playing ? Ico::pause(iconC,36) : Ico::play(iconC,36));
+        m_playPauseBtn->setIcon(playing
+            ? uiIcon("pause", iconC, 36, Ico::pause(iconC, 36))
+            : uiIcon("play_arrow", iconC, 36, Ico::play(iconC, 36)));
         m_playPauseBtn->setStyleSheet(QString(
             "QToolButton#playBtn{background-color:%1;border-radius:30px;border:none;}"
             "QToolButton#playBtn:hover{background-color:%2;}"
             "QToolButton#playBtn:pressed{background-color:%3;}").arg(acH,acL,acD));
     }
     if (m_miniPlayBtn) {
-        m_miniPlayBtn->setIcon(playing ? Ico::pause(iconC,22) : Ico::play(iconC,22));
+        m_miniPlayBtn->setIcon(playing
+            ? uiIcon("pause", iconC, 22, Ico::pause(iconC, 22))
+            : uiIcon("play_arrow", iconC, 22, Ico::play(iconC, 22)));
         m_miniPlayBtn->setStyleSheet(QString(
             "QToolButton#playBtn{background-color:%1;border-radius:18px;border:none;}"
             "QToolButton#playBtn:hover{background-color:%2;}"
@@ -1573,43 +2315,157 @@ void MainWindow::applyTheme() {
     }
 
     const QColor controlColor = theme.text;
-    if (m_prevBtn) m_prevBtn->setIcon(Ico::prev(controlColor, 22));
-    if (m_nextBtn) m_nextBtn->setIcon(Ico::next(controlColor, 22));
-    if (m_stopBtn) m_stopBtn->setIcon(Ico::stop(controlColor, 16));
+    if (m_prevBtn) m_prevBtn->setIcon(uiIcon(
+        "skip_previous", controlColor, 22, Ico::prev(controlColor, 22)));
+    if (m_nextBtn) m_nextBtn->setIcon(uiIcon(
+        "skip_next", controlColor, 22, Ico::next(controlColor, 22)));
+    if (m_stopBtn) m_stopBtn->setIcon(uiIcon(
+        "stop", controlColor, 16, Ico::stop(controlColor, 16)));
     const QColor secondaryIconColor = theme.subtext0;
-    if (m_miniPrevBtn) m_miniPrevBtn->setIcon(Ico::prev(secondaryIconColor, 16));
-    if (m_miniNextBtn) m_miniNextBtn->setIcon(Ico::next(secondaryIconColor, 16));
-    if (m_miniExpandBtn) m_miniExpandBtn->setIcon(Ico::expand(secondaryIconColor, 13));
-    if (m_miniMinimizeBtn) m_miniMinimizeBtn->setIcon(Ico::minimize(secondaryIconColor, 13));
-    if (m_miniCloseBtn) m_miniCloseBtn->setIcon(Ico::closeIcon(secondaryIconColor, 12));
+    if (m_miniPrevBtn) m_miniPrevBtn->setIcon(uiIcon(
+        "skip_previous", secondaryIconColor, 16, Ico::prev(secondaryIconColor, 16)));
+    if (m_miniNextBtn) m_miniNextBtn->setIcon(uiIcon(
+        "skip_next", secondaryIconColor, 16, Ico::next(secondaryIconColor, 16)));
+    if (m_miniMoreBtn) m_miniMoreBtn->setIcon(uiIcon(
+        "more_horiz", secondaryIconColor, 19,
+        MaterialIco::icon("more_horiz", secondaryIconColor, 19)));
+    if (m_miniStopAct) m_miniStopAct->setIcon(uiIcon(
+        "stop", secondaryIconColor, 16, Ico::stop(secondaryIconColor, 16)));
+    if (m_miniShuffleAct) {
+        const QColor color = m_shuffle ? theme.accent : secondaryIconColor;
+        m_miniShuffleAct->setIcon(uiIcon(
+            "shuffle", color, 16, Ico::shuffle(color, 16)));
+        m_miniShuffleAct->setChecked(m_shuffle);
+    }
+    if (m_miniSpeedMenu) m_miniSpeedMenu->setIcon(uiIcon(
+        "equalizer", secondaryIconColor, 16, Ico::equalizer(secondaryIconColor, 16)));
+    if (m_miniExpandBtn) m_miniExpandBtn->setIcon(uiIcon(
+        "fullscreen", secondaryIconColor, 13, Ico::expand(secondaryIconColor, 13)));
+    if (m_miniMinimizeBtn) m_miniMinimizeBtn->setIcon(uiIcon(
+        "minimize", secondaryIconColor, 13, Ico::minimize(secondaryIconColor, 13)));
+    if (m_miniCloseBtn) m_miniCloseBtn->setIcon(uiIcon(
+        "close", secondaryIconColor, 12, Ico::closeIcon(secondaryIconColor, 12)));
     if (m_miniDockBtn) {
         const QColor dockColor = m_miniDockBtn->isChecked()
             ? theme.accent : secondaryIconColor;
-        m_miniDockBtn->setIcon(Ico::dockTop(dockColor, 14));
+        m_miniDockBtn->setIcon(uiIcon(
+            "vertical_align_top", dockColor, 14, Ico::dockTop(dockColor, 14)));
     }
-    if (m_micBtn) m_micBtn->setIcon(Ico::microphone(secondaryIconColor, 18));
-    if (m_openUrlAct) m_openUrlAct->setIcon(Ico::link(secondaryIconColor, 18));
-    if (m_scanLibraryAct) m_scanLibraryAct->setIcon(Ico::folder(secondaryIconColor, 18));
+    if (m_micBtn) m_micBtn->setIcon(uiIcon(
+        "mic", secondaryIconColor, 18, Ico::microphone(secondaryIconColor, 18)));
+    if (m_openUrlAct) m_openUrlAct->setIcon(uiIcon(
+        "link", secondaryIconColor, 18, Ico::link(secondaryIconColor, 18)));
+    if (m_scanLibraryAct) m_scanLibraryAct->setIcon(uiIcon(
+        "folder", secondaryIconColor, 18, Ico::folder(secondaryIconColor, 18)));
+    std::function<void(QMenu *)> updateMenuIcons = [&](QMenu *menu) {
+        if (!menu) return;
+        for (QAction *action : menu->actions()) {
+            if (action->isSeparator()) continue;
+            QString label = action->text();
+            label.remove('&');
+            QString symbol = "tune";
+            QIcon fallback = Ico::sliders(secondaryIconColor, 18);
+            if (label.contains("Открыть файлы") || label.contains("Добавить")) {
+                symbol = "library_music"; fallback = Ico::music(secondaryIconColor, 18);
+            } else if (label.contains("папку", Qt::CaseInsensitive)
+                       || label.contains("библиотек", Qt::CaseInsensitive)
+                       || label.contains("Недавние")) {
+                symbol = "folder"; fallback = Ico::folder(secondaryIconColor, 18);
+            } else if (label.contains("ссылк", Qt::CaseInsensitive)) {
+                symbol = "link"; fallback = Ico::link(secondaryIconColor, 18);
+            } else if (label.contains("Сохранить")) {
+                symbol = "vertical_align_top"; fallback = Ico::dockTop(secondaryIconColor, 18);
+            } else if (label.contains("Загрузить") || label.contains("обновлен", Qt::CaseInsensitive)) {
+                symbol = "download"; fallback = Ico::download(secondaryIconColor, 18);
+            } else if (label.contains("Выход") || label.contains("Закрыть")) {
+                symbol = "close"; fallback = Ico::closeIcon(secondaryIconColor, 18);
+            } else if (label.contains("Играть") || label.contains("Пауза")) {
+                symbol = "play_arrow"; fallback = Ico::play(secondaryIconColor, 18);
+            } else if (label == "Стоп") {
+                symbol = "stop"; fallback = Ico::stop(secondaryIconColor, 18);
+            } else if (label.contains("Предыдущ")) {
+                symbol = "skip_previous"; fallback = Ico::prev(secondaryIconColor, 18);
+            } else if (label.contains("Следующ")) {
+                symbol = "skip_next"; fallback = Ico::next(secondaryIconColor, 18);
+            } else if (label.contains("Перемеш")) {
+                symbol = "shuffle"; fallback = Ico::shuffle(secondaryIconColor, 18);
+            } else if (label.contains("Повтор") || label.contains("Один трек")
+                       || label.contains("Весь плейлист") || label == "Выкл.") {
+                symbol = "repeat"; fallback = Ico::repeatAll(secondaryIconColor, 18);
+            } else if (label.contains("Скорость") || label.contains("Кроссфейд")
+                       || label.endsWith(QString::fromUtf8("×")) || label.contains("сек.")) {
+                symbol = "equalizer"; fallback = Ico::equalizer(secondaryIconColor, 18);
+            } else if (label.contains("Мини-плеер")) {
+                symbol = "fullscreen"; fallback = Ico::expand(secondaryIconColor, 18);
+            } else if (label.contains("Поверх")) {
+                symbol = "vertical_align_top"; fallback = Ico::dockTop(secondaryIconColor, 18);
+            } else if (label.contains("О программе")) {
+                symbol = "music_note"; fallback = Ico::music(secondaryIconColor, 18);
+            }
+            action->setIcon(uiIcon(symbol, secondaryIconColor, 18, fallback));
+            action->setIconVisibleInMenu(true);
+            if (action->menu()) updateMenuIcons(action->menu());
+        }
+    };
+    for (QAction *topAction : menuBar()->actions())
+        if (topAction->menu()) updateMenuIcons(topAction->menu());
     if (m_trayPlayAct) {
         m_trayPlayAct->setIcon(playing
-            ? Ico::pause(theme.text, 16) : Ico::play(theme.text, 16));
+            ? uiIcon("pause", theme.text, 16, Ico::pause(theme.text, 16))
+            : uiIcon("play_arrow", theme.text, 16, Ico::play(theme.text, 16)));
     }
-    if (m_trayNextAct) m_trayNextAct->setIcon(Ico::next(theme.text, 16));
+    if (m_trayNextAct) m_trayNextAct->setIcon(uiIcon(
+        "skip_next", theme.text, 16, Ico::next(theme.text, 16)));
     const QColor shuffleColor = m_shuffle ? theme.accent : theme.subtext0;
-    if (m_shuffleBtn) m_shuffleBtn->setIcon(Ico::shuffle(shuffleColor, 18));
-    if (m_miniShuffleBtn) m_miniShuffleBtn->setIcon(Ico::shuffle(shuffleColor, 15));
-    if (m_playlistUpBtn) m_playlistUpBtn->setIcon(Ico::arrowUp(theme.subtext1, 15));
-    if (m_playlistDownBtn) m_playlistDownBtn->setIcon(Ico::arrowDown(theme.subtext1, 15));
-    if (m_playlistRemoveBtn) m_playlistRemoveBtn->setIcon(Ico::closeIcon(theme.subtext1, 15));
-    if (m_playlistClearBtn) m_playlistClearBtn->setIcon(Ico::trash(theme.subtext1, 15));
+    if (m_shuffleBtn) m_shuffleBtn->setIcon(uiIcon(
+        "shuffle", shuffleColor, 18, Ico::shuffle(shuffleColor, 18)));
+    if (m_miniShuffleBtn) m_miniShuffleBtn->setIcon(uiIcon(
+        "shuffle", shuffleColor, 15, Ico::shuffle(shuffleColor, 15)));
+    if (m_playlistUpBtn) m_playlistUpBtn->setIcon(uiIcon(
+        "arrow_upward", theme.text, 18, Ico::arrowUp(theme.text, 18)));
+    if (m_playlistDownBtn) m_playlistDownBtn->setIcon(uiIcon(
+        "arrow_downward", theme.text, 18, Ico::arrowDown(theme.text, 18)));
+    if (m_playlistRemoveBtn) m_playlistRemoveBtn->setIcon(uiIcon(
+        "close", theme.text, 18, Ico::closeIcon(theme.text, 18)));
+    if (m_playlistClearBtn) m_playlistClearBtn->setIcon(uiIcon(
+        "delete", theme.text, 18, Ico::trash(theme.text, 18)));
+    if (m_newPlaylistBtn) {
+        m_newPlaylistBtn->setText(QString());
+        m_newPlaylistBtn->setIcon(MaterialIco::icon("add", theme.text, 18));
+        m_newPlaylistBtn->setIconSize({18, 18});
+    }
+    if (m_modernBrandIcon)
+        m_modernBrandIcon->setPixmap(createLogo(34, ThemeManager::palette("mocha"), m_cfg.appIconStyle));
+    if (m_modernHomeBtn) m_modernHomeBtn->setIcon(uiIcon(
+        "home", theme.subtext0, 18, Ico::music(theme.subtext0, 18)));
+    if (m_modernSearchBtn) m_modernSearchBtn->setIcon(uiIcon(
+        "search", theme.subtext0, 18, Ico::sliders(theme.subtext0, 18)));
+    if (m_modernPlaylistsBtn) m_modernPlaylistsBtn->setIcon(uiIcon(
+        "queue_music", theme.subtext0, 18, Ico::music(theme.subtext0, 18)));
+    if (m_modernLibraryBtn) m_modernLibraryBtn->setIcon(uiIcon(
+        "library_music", theme.subtext0, 18, Ico::folder(theme.subtext0, 18)));
+    if (m_modernOpenBtn) m_modernOpenBtn->setIcon(uiIcon(
+        "download", theme.subtext0, 18, Ico::download(theme.subtext0, 18)));
+    if (m_modernFolderBtn) m_modernFolderBtn->setIcon(uiIcon(
+        "folder", theme.subtext0, 18, Ico::folder(theme.subtext0, 18)));
+    if (m_modernLinkBtn) m_modernLinkBtn->setIcon(uiIcon(
+        "link", theme.subtext0, 18, Ico::link(theme.subtext0, 18)));
+    if (m_modernSettingsBtn) m_modernSettingsBtn->setIcon(uiIcon(
+        "tune", theme.subtext0, 18, Ico::sliders(theme.subtext0, 18)));
     if (m_loadingIcon)
-        m_loadingIcon->setPixmap(Ico::download(theme.base, 17).pixmap(17, 17));
+        m_loadingIcon->setPixmap(uiIcon(
+            "download", theme.base, 17, Ico::download(theme.base, 17)).pixmap(17, 17));
     if (m_miniLoadingIcon)
-        m_miniLoadingIcon->setPixmap(Ico::download(theme.accent, 14).pixmap(14, 14));
+        m_miniLoadingIcon->setPixmap(uiIcon(
+            "download", theme.accent, 14, Ico::download(theme.accent, 14)).pixmap(14, 14));
     setVolume(m_volumeSlider->value());
     updateRepeatButton();
 
     if (g_delegate) g_delegate->setTheme(theme);
+    if (m_tabBar) {
+        for (int i = 0; i < m_tabBar->count() && i < m_playlists.size(); ++i)
+            m_tabBar->setTabIcon(i, playlistIcon(i, 18));
+    }
     if (m_playlistWidget) m_playlistWidget->viewport()->update();
 
     const QIcon appIcon(createLogo(128, ThemeManager::palette("mocha"), m_cfg.appIconStyle));
@@ -1620,13 +2476,134 @@ void MainWindow::applyTheme() {
     if (m_seekSlider) {
         m_seekSlider->setAccentColor(theme.accent);
         m_seekSlider->setTrackColor(theme.surface2);
-        m_seekSlider->setBackgroundColor(theme.base);
+        QColor background = theme.base;
+        if (liquidGlass) background.setAlpha(150);
+        m_seekSlider->setBackgroundColor(background);
     }
     if (m_miniWaveform) {
         m_miniWaveform->setAccentColor(theme.accent);
         m_miniWaveform->setTrackColor(theme.surface2);
-        m_miniWaveform->setBackgroundColor(theme.base);
+        QColor background = theme.base;
+        if (liquidGlass) background.setAlpha(150);
+        m_miniWaveform->setBackgroundColor(background);
     }
+    applyModernLayout();
+}
+
+QIcon MainWindow::uiIcon(const QString &symbol, const QColor &color, int size,
+                         const QIcon &fallback) const {
+    if (m_cfg.theme != "liquid") return fallback;
+    const QIcon material = MaterialIco::icon(symbol, color, size);
+    return material.isNull() ? fallback : material;
+}
+
+void MainWindow::applyModernLayout() {
+    const bool modern = m_cfg.modernLayout && !m_miniPlayer;
+    const bool classic = !m_miniPlayer && !modern;
+    const bool floatingGlass = modern && m_cfg.theme == "liquid";
+    const bool compactLiquidControls = m_cfg.theme == "liquid" && (modern || m_miniPlayer);
+
+    if (m_aurora && m_aurora->layout()) {
+        m_aurora->layout()->setContentsMargins(
+            floatingGlass ? 12 : 0, floatingGlass ? 12 : 0,
+            floatingGlass ? 12 : 0, floatingGlass ? 12 : 0);
+        m_aurora->layout()->setSpacing(floatingGlass ? 12 : 0);
+    }
+    if (m_contentShell && m_contentShell->layout())
+        m_contentShell->layout()->setSpacing(floatingGlass ? 12 : 0);
+    if (m_modernSidebar)
+        m_modernSidebar->setFixedWidth(floatingGlass ? 204 : 190);
+
+    if (m_miniBar) {
+        m_miniBar->setFixedHeight(modern ? 68 : 52);
+        if (auto *barLayout = qobject_cast<QHBoxLayout *>(m_miniBar->layout())) {
+            barLayout->setContentsMargins(modern ? 12 : 6, modern ? 8 : 4,
+                                          modern ? 12 : 6, modern ? 8 : 4);
+            barLayout->setSpacing(modern ? 6 : 4);
+        }
+    }
+    if (m_miniAlbumArt) m_miniAlbumArt->setFixedSize(modern ? 48 : 40, modern ? 48 : 40);
+    if (m_miniPrevBtn) m_miniPrevBtn->setFixedSize(modern ? 34 : 28, modern ? 34 : 28);
+    if (m_miniPlayBtn) m_miniPlayBtn->setFixedSize(modern ? 44 : 36, modern ? 44 : 36);
+    if (m_miniNextBtn) m_miniNextBtn->setFixedSize(modern ? 34 : 28, modern ? 34 : 28);
+    if (m_miniWaveform) m_miniWaveform->setFixedHeight(modern ? 42 : 36);
+    if (m_miniTitle) {
+        m_miniTitle->setMinimumWidth(modern ? 120 : 100);
+        m_miniTitle->setMaximumWidth(modern ? 165 : 220);
+    }
+    if (m_miniWaveform)
+        m_miniWaveform->setMinimumWidth(modern ? 420 : 160);
+
+    if (m_modernSidebar) m_modernSidebar->setVisible(modern);
+    if (m_topWidget) m_topWidget->setVisible(classic);
+    if (m_separator) m_separator->setVisible(classic);
+    if (m_playlistPanel) m_playlistPanel->setVisible(!m_miniPlayer);
+    if (m_miniBar) m_miniBar->setVisible(m_miniPlayer || modern);
+
+    if (m_miniDockBtn) m_miniDockBtn->setVisible(m_miniPlayer);
+    if (m_miniExpandBtn) m_miniExpandBtn->setVisible(m_miniPlayer);
+    if (m_miniMinimizeBtn) m_miniMinimizeBtn->setVisible(m_miniPlayer);
+    if (m_miniCloseBtn) m_miniCloseBtn->setVisible(m_miniPlayer);
+    if (m_miniShuffleBtn) m_miniShuffleBtn->setVisible(!compactLiquidControls);
+    if (m_miniRepeatBtn) m_miniRepeatBtn->setVisible(!compactLiquidControls);
+    if (m_miniMoreBtn) m_miniMoreBtn->setVisible(compactLiquidControls);
+
+    if (menuBar()) menuBar()->setVisible(!m_miniPlayer);
+    if (statusBar())
+        statusBar()->setVisible(classic && m_cfg.showStatusBar);
+
+    if (m_playlistPanel && m_playlistPanel->layout()) {
+        m_playlistPanel->layout()->setContentsMargins(
+            modern ? 18 : 12, modern ? 16 : 0,
+            modern ? 18 : 12, modern ? 14 : 10);
+        m_playlistPanel->layout()->setSpacing(modern ? 8 : 4);
+    }
+    if (m_modernHomeBtn && modern) m_modernHomeBtn->setChecked(true);
+}
+
+void MainWindow::showMiniMoreMenu() {
+    if (!m_miniMoreBtn || !m_miniMoreMenu) return;
+    if (m_miniMoreMenu->isVisible()) {
+        m_miniMoreMenu->hide();
+        return;
+    }
+
+    m_miniMoreMenu->ensurePolished();
+    m_miniMoreMenu->adjustSize();
+    const QSize menuSize = m_miniMoreMenu->sizeHint();
+    QPoint target = m_miniMoreBtn->mapToGlobal(
+        QPoint(m_miniMoreBtn->width() - menuSize.width(), -menuSize.height() - 9));
+    if (QScreen *screen = QGuiApplication::screenAt(target)) {
+        const QRect available = screen->availableGeometry().adjusted(6, 6, -6, -6);
+        target.setX(qBound(available.left(), target.x(),
+                           available.right() - menuSize.width() + 1));
+        target.setY(qBound(available.top(), target.y(),
+                           available.bottom() - menuSize.height() + 1));
+    }
+
+    m_miniMoreMenu->setWindowOpacity(0.0);
+    m_miniMoreMenu->popup(target);
+    QPointer<QMenu> menu(m_miniMoreMenu);
+    QTimer::singleShot(0, this, [menu] {
+        if (!menu || !menu->isVisible()) return;
+        const QRect endGeometry = menu->geometry();
+        const QRect startGeometry = endGeometry.translated(0, 12);
+        menu->setGeometry(startGeometry);
+
+        auto *slide = new QPropertyAnimation(menu, "geometry", menu);
+        slide->setDuration(180);
+        slide->setStartValue(startGeometry);
+        slide->setEndValue(endGeometry);
+        slide->setEasingCurve(QEasingCurve::OutCubic);
+        slide->start(QAbstractAnimation::DeleteWhenStopped);
+
+        auto *fade = new QPropertyAnimation(menu, "windowOpacity", menu);
+        fade->setDuration(150);
+        fade->setStartValue(0.0);
+        fade->setEndValue(1.0);
+        fade->setEasingCurve(QEasingCurve::OutCubic);
+        fade->start(QAbstractAnimation::DeleteWhenStopped);
+    });
 }
 
 void MainWindow::syncShellShortcutIcon() {
@@ -1722,6 +2699,7 @@ void MainWindow::loadSettings() {
     m_cfg.showTrackIcons = m_settings.value("cfg/showTrackIcons", true).toBool();
     m_cfg.showStatusBar  = m_settings.value("cfg/showStatusBar", true).toBool();
     m_cfg.closeToTray    = m_settings.value("cfg/closeToTray", true).toBool();
+    m_cfg.modernLayout   = m_settings.value("cfg/modernLayout", false).toBool();
     m_cfg.discordEnabled = m_settings.value("cfg/discordEnabled", true).toBool();
     m_cfg.ytDlpCookiesBrowser  = m_settings.value("cfg/ytDlpCookiesBrowser", "").toString();
     m_cfg.streamAudioQuality   = m_settings.value("cfg/streamAudioQuality", "best").toString();
@@ -1774,6 +2752,7 @@ void MainWindow::saveSettings() {
     m_settings.setValue("cfg/showTrackIcons", m_cfg.showTrackIcons);
     m_settings.setValue("cfg/showStatusBar",  m_cfg.showStatusBar);
     m_settings.setValue("cfg/closeToTray",    m_cfg.closeToTray);
+    m_settings.setValue("cfg/modernLayout",   m_cfg.modernLayout);
     m_settings.setValue("cfg/discordEnabled", m_cfg.discordEnabled);
     m_settings.setValue("cfg/ytDlpCookiesBrowser", m_cfg.ytDlpCookiesBrowser);
     m_settings.setValue("cfg/streamAudioQuality",  m_cfg.streamAudioQuality);
@@ -2108,8 +3087,10 @@ void MainWindow::onPlaylistContextMenu(const QPoint &pos) {
     QMenu menu(this);
     if (item) {
         const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
-        menu.addAction(Ico::play(theme.text, 16), "Воспроизвести", [this, item]{ onTrackActivated(item); });
-        menu.addAction(Ico::trash(theme.text, 16), "Удалить из плейлиста", this, &MainWindow::removeSelectedTracks);
+        menu.addAction(uiIcon("play_arrow", theme.text, 16, Ico::play(theme.text, 16)),
+                       "Воспроизвести", [this, item]{ onTrackActivated(item); });
+        menu.addAction(uiIcon("delete", theme.text, 16, Ico::trash(theme.text, 16)),
+                       "Удалить из плейлиста", this, &MainWindow::removeSelectedTracks);
         if (m_playlists.size() > 1) {
             QMenu *moveMenu = menu.addMenu("Переместить в плейлист");
             QMenu *copyMenu = menu.addMenu("Копировать в плейлист");
@@ -2122,6 +3103,13 @@ void MainWindow::onPlaylistContextMenu(const QPoint &pos) {
         }
         menu.addSeparator();
         QUrl itemUrl = item->data(Qt::UserRole).value<QUrl>();
+        if (!itemUrl.isLocalFile()) {
+            menu.addAction(uiIcon("link", theme.text, 16, Ico::link(theme.text, 16)),
+                           "Копировать ссылку", [this, itemUrl] {
+                QGuiApplication::clipboard()->setText(itemUrl.toString());
+                statusBar()->showMessage("Ссылка скопирована", 2500);
+            });
+        }
         menu.addAction("Установить иконку...", [this, item, itemUrl]{
             QString img = QFileDialog::getOpenFileName(this, "Выбрать иконку",
                 QString(), "Изображения (*.png *.jpg *.jpeg *.bmp *.webp)");
@@ -2277,7 +3265,9 @@ void MainWindow::playTrack(int index) {
 QString MainWindow::ytDlpPath() const {
     const QString bundled = QCoreApplication::applicationDirPath() + "/yt-dlp.exe";
     if (QFile::exists(bundled)) return bundled;
-    return "yt-dlp";
+    const QString installed = QStandardPaths::findExecutable("yt-dlp.exe");
+    if (!installed.isEmpty()) return installed;
+    return bundled;
 }
 
 QString MainWindow::streamCacheDir() const {
@@ -2517,7 +3507,7 @@ void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
 
     auto *proc = new QProcess(this);
     QStringList args = {
-        "--no-playlist", "--no-warnings", "--no-progress",
+        "--no-playlist", "--no-warnings", "--newline", "--no-color", "--progress",
         "--extractor-args", "youtube:player_client=android,web",
     };
     if (!m_cfg.ytDlpCookiesBrowser.isEmpty())
@@ -2527,31 +3517,52 @@ void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
     else if (m_cfg.streamAudioQuality == "low") format = "bestaudio[abr<=64]/bestaudio/best";
     args << "-f" << format << "--print-json" << "-o" << outTemplate << pageUrl.toString();
 
+    auto stderrData = QSharedPointer<QByteArray>::create();
+    auto progressRemainder = QSharedPointer<QByteArray>::create();
+    connect(proc, &QProcess::readyReadStandardError, this,
+            [this, proc, stderrData, progressRemainder] {
+        const QByteArray chunk = proc->readAllStandardError();
+        stderrData->append(chunk);
+        progressRemainder->append(chunk);
+        const QList<QByteArray> lines = progressRemainder->split('\n');
+        *progressRemainder = lines.isEmpty() ? QByteArray() : lines.last();
+        static const QRegularExpression progressPattern(
+            R"(\[download\]\s+([0-9]+(?:\.[0-9]+)?)%)");
+        for (int i = 0; i + 1 < lines.size(); ++i) {
+            const QRegularExpressionMatch match = progressPattern.match(
+                QString::fromUtf8(lines[i]));
+            if (!match.hasMatch()) continue;
+            const int percent = qBound(0, qRound(match.captured(1).toDouble()), 100);
+            setLoadingProgress(percent);
+            updateLoadingText(QString("Загрузка трека · %1%").arg(percent));
+        }
+    });
+
     connect(proc, &QProcess::errorOccurred, this,
         [this, proc, callback](QProcess::ProcessError err) {
             if (err != QProcess::FailedToStart) return;
+            const QString attemptedPath = QDir::toNativeSeparators(proc->program());
+            const QString systemError = proc->errorString();
             proc->deleteLater();
             if (!m_ytDlpMissingWarned) {
                 m_ytDlpMissingWarned = true;
                 QMessageBox::warning(this, "yt-dlp не найден",
-                    "Для воспроизведения по ссылке (SoundCloud, YouTube и т.п.) нужна "
-                    "утилита yt-dlp.\n\n"
-                    "Установи её, например: pip install yt-dlp (или winget install "
-                    "yt-dlp.yt-dlp), и убедись, что она доступна в PATH — либо просто "
-                    "положи yt-dlp.exe рядом с EchoBoxII.exe.\n\n"
-                    "Если yt-dlp.exe лежит рядом, но всё равно не находится — проверь, "
-                    "не удалил/не заблокировал ли его антивирус (для yt-dlp.exe это "
-                    "частое ложное срабатывание).");
+                    "Компонент для загрузки музыки по ссылке отсутствует или Windows "
+                    "не разрешила его запустить.\n\nПроверенный путь:\n" + attemptedPath +
+                    "\n\nОтвет Windows:\n" + systemError +
+                    "\n\nyt-dlp.exe должен находиться рядом с EchoBoxII.exe.");
             }
             callback(false, QString(), QString(), QString(), QString(),
-                     "yt-dlp.exe не найден или не может быть запущен (возможно, удалён антивирусом)");
+                     "Не удалось запустить yt-dlp.exe: " + systemError);
         });
 
     connect(proc, &QProcess::finished, this,
-        [this, proc, pageUrl, hash, cacheDir, callback](int exitCode, QProcess::ExitStatus exitStatus) {
+        [this, proc, pageUrl, hash, cacheDir, callback, stderrData]
+        (int exitCode, QProcess::ExitStatus exitStatus) {
+            stderrData->append(proc->readAllStandardError());
             proc->deleteLater();
             if (exitStatus != QProcess::NormalExit || exitCode != 0) {
-                const QStringList errLines = QString::fromUtf8(proc->readAllStandardError())
+                const QStringList errLines = QString::fromUtf8(*stderrData)
                     .split('\n', Qt::SkipEmptyParts);
                 const QString lastErr = errLines.isEmpty() ? QString() : errLines.last().trimmed();
                 callback(false, QString(), QString(), QString(), QString(),
@@ -2569,6 +3580,9 @@ void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
                 return;
             }
             const QString localPath = dir.filePath(found.first());
+
+            setLoadingProgress(100);
+            updateLoadingText("Загрузка трека · 100%");
 
             const QList<QByteArray> lines = proc->readAllStandardOutput().split('\n');
             QJsonObject obj;
@@ -2725,8 +3739,10 @@ void MainWindow::setVolume(int v) {
     m_volumeLabel->setText(QString("%1%").arg(v));
     const int level = (v == 0) ? 0 : (v < 40) ? 1 : (v < 75) ? 2 : 3;
     const QColor vc = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor).text;
-    m_muteBtn->setIcon(Ico::volume(level, vc, 22));
-    if (m_miniMuteBtn)   m_miniMuteBtn->setIcon(Ico::volume(level, vc, 18));
+    const QString volumeSymbol = level == 0 ? "volume_off" : "volume_up";
+    m_muteBtn->setIcon(uiIcon(volumeSymbol, vc, 22, Ico::volume(level, vc, 22)));
+    if (m_miniMuteBtn)
+        m_miniMuteBtn->setIcon(uiIcon(volumeSymbol, vc, 18, Ico::volume(level, vc, 18)));
     auto sync = [](QSlider *s, int val){
         if (s && s->value() != val) { s->blockSignals(true); s->setValue(val); s->blockSignals(false); }
     };
@@ -2751,6 +3767,8 @@ void MainWindow::onSpeedChanged(int index) {
     if (index >= 0 && index < 6) {
         m_player->setPlaybackRate(speeds[index]);
         m_eqEngine->setPlaybackRate(speeds[index]);
+        if (m_miniSpeedMenu)
+            m_miniSpeedMenu->setTitle("Скорость · " + m_speedCombo->itemText(index));
     }
 }
 
@@ -2759,9 +3777,16 @@ void MainWindow::toggleShuffle() {
     m_shuffleBtn->setChecked(m_shuffle);
     const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
     const QColor c = m_shuffle ? theme.accent : theme.subtext0;
-    m_shuffleBtn->setIcon(Ico::shuffle(c, 18));
-    if (m_miniShuffleBtn) { m_miniShuffleBtn->setChecked(m_shuffle); m_miniShuffleBtn->setIcon(Ico::shuffle(c, 15)); }
+    m_shuffleBtn->setIcon(uiIcon("shuffle", c, 18, Ico::shuffle(c, 18)));
+    if (m_miniShuffleBtn) {
+        m_miniShuffleBtn->setChecked(m_shuffle);
+        m_miniShuffleBtn->setIcon(uiIcon("shuffle", c, 15, Ico::shuffle(c, 15)));
+    }
     if (m_shuffleAct) m_shuffleAct->setChecked(m_shuffle);
+    if (m_miniShuffleAct) {
+        m_miniShuffleAct->setChecked(m_shuffle);
+        m_miniShuffleAct->setIcon(uiIcon("shuffle", c, 16, Ico::shuffle(c, 16)));
+    }
     statusBar()->showMessage(m_shuffle ? "Перемешивание включено" : "Перемешивание выключено", 2000);
     popButtonIcon(m_shuffleBtn);
     if (m_miniShuffleBtn) popButtonIcon(m_miniShuffleBtn);
@@ -2782,25 +3807,40 @@ void MainWindow::updateRepeatButton() {
     const QColor on = theme.accent;
     switch (m_repeat) {
     case RepeatMode::Off:
-        m_repeatBtn->setIcon(Ico::repeatAll(off, 18));
+        m_repeatBtn->setIcon(uiIcon("repeat", off, 18, Ico::repeatAll(off, 18)));
         m_repeatBtn->setToolTip("Повтор: выкл.");
         m_repeatBtn->setChecked(false);
-        if (m_miniRepeatBtn) { m_miniRepeatBtn->setChecked(false); m_miniRepeatBtn->setIcon(Ico::repeatAll(off,15)); }
+        if (m_miniRepeatBtn) { m_miniRepeatBtn->setChecked(false); m_miniRepeatBtn->setIcon(uiIcon("repeat", off, 15, Ico::repeatAll(off,15))); }
         if (m_repeatOffAct) m_repeatOffAct->setChecked(true);
+        if (m_miniRepeatAct) {
+            m_miniRepeatAct->setText("Повтор: выключен");
+            m_miniRepeatAct->setChecked(false);
+            m_miniRepeatAct->setIcon(uiIcon("repeat", off, 16, Ico::repeatAll(off, 16)));
+        }
         break;
     case RepeatMode::All:
-        m_repeatBtn->setIcon(Ico::repeatAll(on, 18));
+        m_repeatBtn->setIcon(uiIcon("repeat", on, 18, Ico::repeatAll(on, 18)));
         m_repeatBtn->setToolTip("Повтор: весь плейлист");
         m_repeatBtn->setChecked(true);
-        if (m_miniRepeatBtn) { m_miniRepeatBtn->setChecked(true); m_miniRepeatBtn->setIcon(Ico::repeatAll(on,15)); }
+        if (m_miniRepeatBtn) { m_miniRepeatBtn->setChecked(true); m_miniRepeatBtn->setIcon(uiIcon("repeat", on, 15, Ico::repeatAll(on,15))); }
         if (m_repeatAllAct) m_repeatAllAct->setChecked(true);
+        if (m_miniRepeatAct) {
+            m_miniRepeatAct->setText("Повтор: весь плейлист");
+            m_miniRepeatAct->setChecked(true);
+            m_miniRepeatAct->setIcon(uiIcon("repeat", on, 16, Ico::repeatAll(on, 16)));
+        }
         break;
     case RepeatMode::One:
-        m_repeatBtn->setIcon(Ico::repeatOne(on, 18));
+        m_repeatBtn->setIcon(uiIcon("repeat_one", on, 18, Ico::repeatOne(on, 18)));
         m_repeatBtn->setToolTip("Повтор: один трек");
         m_repeatBtn->setChecked(true);
-        if (m_miniRepeatBtn) { m_miniRepeatBtn->setChecked(true); m_miniRepeatBtn->setIcon(Ico::repeatOne(on,15)); }
+        if (m_miniRepeatBtn) { m_miniRepeatBtn->setChecked(true); m_miniRepeatBtn->setIcon(uiIcon("repeat_one", on, 15, Ico::repeatOne(on,15))); }
         if (m_repeatOneAct) m_repeatOneAct->setChecked(true);
+        if (m_miniRepeatAct) {
+            m_miniRepeatAct->setText("Повтор: один трек");
+            m_miniRepeatAct->setChecked(true);
+            m_miniRepeatAct->setIcon(uiIcon("repeat_one", on, 16, Ico::repeatOne(on, 16)));
+        }
         break;
     }
     popButtonIcon(m_repeatBtn);
@@ -2834,6 +3874,7 @@ void MainWindow::toggleMiniPlayer() {
         m_miniBar->setVisible(m_miniPlayer);
         menuBar()->setVisible(!m_miniPlayer);
         statusBar()->setVisible(!m_miniPlayer && m_cfg.showStatusBar);
+        applyModernLayout();
 
         if (!m_miniPlayer && m_miniDocked) {
             m_miniDocked = false;
@@ -2841,7 +3882,9 @@ void MainWindow::toggleMiniPlayer() {
                 m_miniDockBtn->setChecked(false);
                 const ThemePalette theme =
                     ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
-                m_miniDockBtn->setIcon(Ico::dockTop(theme.subtext0, 14));
+                m_miniDockBtn->setIcon(uiIcon(
+                    "vertical_align_top", theme.subtext0, 14,
+                    Ico::dockTop(theme.subtext0, 14)));
             }
         }
 
@@ -2883,6 +3926,7 @@ void MainWindow::toggleMiniPlayer() {
                 setMinimumSize(720, 540);
                 setMaximumHeight(QWIDGETSIZE_MAX);
             }
+            applyModernLayout();
             setWindowOpacity(1.0);
             m_miniTransitioning = false;
             if (m_miniPlayerAct)
@@ -2904,8 +3948,9 @@ void MainWindow::toggleMiniDock() {
     if (m_miniDockBtn) {
         const ThemePalette theme =
             ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
-        m_miniDockBtn->setIcon(Ico::dockTop(
-            m_miniDocked ? theme.accent : theme.subtext0, 14));
+        const QColor dockColor = m_miniDocked ? theme.accent : theme.subtext0;
+        m_miniDockBtn->setIcon(uiIcon(
+            "vertical_align_top", dockColor, 14, Ico::dockTop(dockColor, 14)));
     }
     const QRect avail = scr->availableGeometry();
 
@@ -2948,7 +3993,12 @@ void MainWindow::onDurationChanged(qint64 duration) {
         const QUrl src = m_player->source();
         QVector<float> cached;
         if (m_waveformCache.load(src, duration, &cached)) {
-            applyWaveformPeaks(cached);
+            if (cached.size() >= WaveformSlider::targetBinCount()) {
+                applyWaveformPeaks(cached);
+            } else {
+                m_miniWaveform->setPartialPeaks(cached);
+                m_seekSlider->loadWaveform(src, duration, cached);
+            }
         } else {
             m_miniWaveform->clearWaveform();
             m_seekSlider->loadWaveform(src, duration);
@@ -2979,8 +4029,12 @@ void MainWindow::resetWaveformUi() {
 
 void MainWindow::onWaveformReady(const QUrl &url, qint64 duration,
                                  QVector<float> peaks) {
-    m_waveformCache.save(url, duration, peaks);
+    m_waveformCache.rememberPartial(url, duration, peaks);
     if (m_player->source() == url) applyWaveformPeaks(peaks);
+    QThreadPool::globalInstance()->start([url, duration, peaks] {
+        WaveformCache diskCache;
+        diskCache.save(url, duration, peaks);
+    });
 }
 
 void MainWindow::onPositionChanged(qint64 position) {
@@ -3008,14 +4062,20 @@ void MainWindow::onPlaybackStateChanged(QMediaPlayer::PlaybackState state) {
     const bool playing = (state == QMediaPlayer::PlayingState);
     const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
     const QColor iconC = theme.accent.lightness() > 160 ? theme.crust : QColor(0xff,0xff,0xff);
-    m_playPauseBtn->setIcon(playing ? Ico::pause(iconC, 36) : Ico::play(iconC, 36));
-    m_miniPlayBtn->setIcon(playing  ? Ico::pause(iconC, 22) : Ico::play(iconC, 22));
+    m_playPauseBtn->setIcon(playing
+        ? uiIcon("pause", iconC, 36, Ico::pause(iconC, 36))
+        : uiIcon("play_arrow", iconC, 36, Ico::play(iconC, 36)));
+    m_miniPlayBtn->setIcon(playing
+        ? uiIcon("pause", iconC, 22, Ico::pause(iconC, 22))
+        : uiIcon("play_arrow", iconC, 22, Ico::play(iconC, 22)));
     popButtonIcon(m_playPauseBtn);
     popButtonIcon(m_miniPlayBtn);
     m_visualizer->setActive(playing);
     if (m_trayPlayAct) {
         m_trayPlayAct->setText(playing ? "Пауза" : "Играть");
-        m_trayPlayAct->setIcon(playing ? Ico::pause(theme.text, 16) : Ico::play(theme.text, 16));
+        m_trayPlayAct->setIcon(playing
+            ? uiIcon("pause", theme.text, 16, Ico::pause(theme.text, 16))
+            : uiIcon("play_arrow", theme.text, 16, Ico::play(theme.text, 16)));
     }
     if (m_discord && m_cfg.discordEnabled)
         m_discord->updateActivity(m_titleLabel->text(), m_artistLabel->text(), playing);
@@ -3184,10 +4244,15 @@ void MainWindow::fadeOutWidget(QWidget *w, int durationMs) {
 
 void MainWindow::showLoadingBanner(const QString &text) {
     m_loadingText->setText(text);
-    m_loadingBar->setRange(0, 0);
-    m_loadingPercent->setText(QString::fromUtf8("•••"));
-    m_miniLoadingBar->setRange(0, 0);
-    m_miniLoadingPercent->setText(QString::fromUtf8("•••"));
+    m_miniLoadingText->setText(text);
+    m_loadingBar->setRange(0, 100);
+    m_loadingBar->setValue(0);
+    m_loadingPercent->clear();
+    m_miniLoadingBar->setRange(0, 100);
+    m_miniLoadingBar->setValue(0);
+    m_miniLoadingPercent->clear();
+    m_miniTitle->setVisible(false);
+    m_miniWaveform->setVisible(false);
     m_miniLoadingPanel->setVisible(true);
     m_miniLoadingPanel->setToolTip(text);
     if (m_loadingAnim) { m_loadingAnim->stop(); m_loadingAnim = nullptr; }
@@ -3213,22 +4278,24 @@ void MainWindow::showLoadingBanner(const QString &text) {
 
 void MainWindow::updateLoadingText(const QString &text) {
     if (m_loadingBanner->isVisible()) m_loadingText->setText(text);
+    m_miniLoadingText->setText(text);
     m_miniLoadingPanel->setToolTip(text);
 }
 
 void MainWindow::setLoadingProgress(int percent) {
-    m_miniLoadingBar->setRange(0, percent < 0 ? 0 : 100);
+    m_miniLoadingBar->setRange(0, 100);
     if (percent >= 0) {
         const int value = qBound(0, percent, 100);
         m_miniLoadingBar->setValue(value);
         m_miniLoadingPercent->setText(QString::number(value) + "%");
     } else {
-        m_miniLoadingPercent->setText(QString::fromUtf8("•••"));
+        m_miniLoadingPercent->clear();
     }
     if (!m_loadingBanner->isVisible()) return;
     if (percent < 0) {
-        m_loadingBar->setRange(0, 0);
-        m_loadingPercent->setText(QString::fromUtf8("•••"));
+        m_loadingBar->setRange(0, 100);
+        m_loadingBar->setValue(0);
+        m_loadingPercent->clear();
     } else {
         const int value = qBound(0, percent, 100);
         m_loadingBar->setRange(0, 100);
@@ -3239,6 +4306,8 @@ void MainWindow::setLoadingProgress(int percent) {
 
 void MainWindow::hideLoadingBanner() {
     m_miniLoadingPanel->setVisible(false);
+    m_miniTitle->setVisible(true);
+    m_miniWaveform->setVisible(true);
     if (!m_loadingBanner->isVisible()) return;
     if (m_loadingAnim) { m_loadingAnim->stop(); m_loadingAnim = nullptr; }
 
@@ -3353,20 +4422,60 @@ void MainWindow::updateAlbumArt() {
         if (m_miniAlbumArt) m_miniAlbumArt->setPixmap(applyRoundedCorners(m_coverPixmap, 40, 6));
         return;
     }
-    QPixmap pm(230, 230);
-    pm.fill(Qt::transparent);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
     const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
-    QLinearGradient g(0, 0, 230, 230);
-    g.setColorAt(0.0, theme.surface1);
-    g.setColorAt(1.0, theme.mantle);
-    p.setBrush(g); p.setPen(Qt::NoPen);
-    p.drawRoundedRect(0, 0, 230, 230, r, r);
-    const QColor noteColor = theme.accent.darker(128);
-    Ico::music(noteColor, 96).paint(&p, QRect(67, 67, 96, 96), Qt::AlignCenter);
-    m_albumArt->setPixmap(pm);
-    if (m_miniAlbumArt) m_miniAlbumArt->setPixmap(applyRoundedCorners(pm, 40, 6));
+    auto placeholder = [&](int size, int radius) {
+        QPixmap image(size, size);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const QRectF bounds(0.7, 0.7, size - 1.4, size - 1.4);
+        QPainterPath shape;
+        shape.addRoundedRect(bounds, radius, radius);
+
+        QLinearGradient background(bounds.topLeft(), bounds.bottomRight());
+        if (theme.id == "liquid") {
+            background.setColorAt(0.0, QColor(228, 246, 255, 105));
+            background.setColorAt(0.3, QColor(theme.accent.red(), theme.accent.green(),
+                                               theme.accent.blue(), 82));
+            background.setColorAt(1.0, QColor(8, 29, 53, 225));
+        } else {
+            background.setColorAt(0.0, theme.surface1);
+            background.setColorAt(1.0, theme.mantle);
+        }
+        painter.setBrush(background);
+        painter.setPen(theme.id == "liquid"
+            ? QPen(QColor(238, 250, 255, 170), qMax(1.0, size * 0.014))
+            : Qt::NoPen);
+        painter.drawPath(shape);
+
+        if (theme.id == "liquid") {
+            const qreal barWidth = size * 0.062;
+            const qreal gap = size * 0.036;
+            const qreal heights[] = {0.24, 0.39, 0.54, 0.39, 0.24};
+            const qreal totalWidth = 5.0 * barWidth + 4.0 * gap;
+            const qreal startX = size * 0.5 - totalWidth * 0.5;
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(235, 250, 255, 240));
+            for (int bar = 0; bar < 5; ++bar) {
+                const qreal height = size * heights[bar];
+                painter.drawRoundedRect(
+                    QRectF(startX + bar * (barWidth + gap),
+                           size * 0.5 - height * 0.5,
+                           barWidth, height),
+                    barWidth * 0.48, barWidth * 0.48);
+            }
+        } else {
+            const int glyphSize = int(size * 0.42);
+            const QColor noteColor = theme.accent.darker(128);
+            Ico::music(noteColor, glyphSize).paint(
+                &painter, QRect((size - glyphSize) / 2, (size - glyphSize) / 2,
+                                glyphSize, glyphSize));
+        }
+        return image;
+    };
+
+    m_albumArt->setPixmap(placeholder(230, r));
+    if (m_miniAlbumArt) m_miniAlbumArt->setPixmap(placeholder(40, 7));
 }
 
 void MainWindow::setCurrentTrackVisual(int index) {
@@ -3439,12 +4548,12 @@ void MainWindow::showAbout() {
     const QColor featIconColor =
         ThemeManager::palette(m_cfg.theme, m_cfg.accentColor).accent;
     const struct { QIcon icon; QString text; } feats[] = {
-        { Ico::link(featIconColor, 16),      "Ссылки: SoundCloud, YouTube и другие" },
-        { Ico::equalizer(featIconColor, 16), "8-полосный графический эквалайзер" },
-        { Ico::sliders(featIconColor, 16),   "Десятки настроек почти для всего" },
-        { Ico::windowIcon(featIconColor, 16),"Мини-плеер, докинг к верху экрана" },
-        { Ico::folder(featIconColor, 16),    "Сканер библиотеки, умный поиск" },
-        { Ico::play(featIconColor, 16),      "Кроссфейд, плейлисты, память позиции" },
+        { uiIcon("link", featIconColor, 16, Ico::link(featIconColor, 16)), "Ссылки: SoundCloud, YouTube и другие" },
+        { uiIcon("equalizer", featIconColor, 16, Ico::equalizer(featIconColor, 16)), "8-полосный графический эквалайзер" },
+        { uiIcon("tune", featIconColor, 16, Ico::sliders(featIconColor, 16)), "Десятки настроек почти для всего" },
+        { uiIcon("fullscreen", featIconColor, 16, Ico::windowIcon(featIconColor, 16)), "Мини-плеер, докинг к верху экрана" },
+        { uiIcon("folder", featIconColor, 16, Ico::folder(featIconColor, 16)), "Сканер библиотеки, умный поиск" },
+        { uiIcon("play_arrow", featIconColor, 16, Ico::play(featIconColor, 16)), "Кроссфейд, плейлисты, память позиции" },
     };
     auto *grid = new QGridLayout;
     grid->setHorizontalSpacing(10);
@@ -4242,34 +5351,29 @@ void MainWindow::newPlaylist() {
     const int n    = m_playlists.size() + 1;
     const QString name = QString("Плейлист %1").arg(n);
     m_playlists.append({name, {}, -1});
-    m_tabBar->addTab(name);
+    const int index = m_tabBar->addTab(name);
+    m_tabBar->setTabIcon(index, playlistIcon(index, 18));
     m_tabBar->setCurrentIndex(m_tabBar->count() - 1);
+    savePlaylistsToFile();
 }
 
 void MainWindow::onTabChanged(int index) {
     if (index == m_activePl || index < 0) return;
+    showPlaylistTracks();
     saveCurrentPlaylistState();
     m_activePl = index;
     loadPlaylistState(index);
 }
 
 void MainWindow::onTabDoubleClicked(int index) {
-    if (index < 0 || index >= m_playlists.size()) return;
-    bool ok;
-    const QString name = QInputDialog::getText(
-        this, "Переименовать плейлист", "Название:",
-        QLineEdit::Normal, m_playlists[index].name, &ok);
-    if (ok && !name.trimmed().isEmpty()) {
-        m_playlists[index].name = name.trimmed();
-        m_tabBar->setTabText(index, name.trimmed());
-    }
+    editPlaylistDetails(index);
 }
 
 void MainWindow::onTabContextMenu(const QPoint &pos) {
     const int index = m_tabBar->tabAt(pos);
     if (index < 0) return;
     QMenu menu(this);
-    menu.addAction("Переименовать", [this, index]{ onTabDoubleClicked(index); });
+    menu.addAction("Обложка и описание...", [this, index]{ editPlaylistDetails(index); });
     auto *delAct = menu.addAction("Удалить плейлист", [this, index]{ deletePlaylist(index); });
     delAct->setEnabled(m_playlists.size() > 1);
     menu.exec(m_tabBar->mapToGlobal(pos));
@@ -4306,6 +5410,389 @@ void MainWindow::deletePlaylist(int index) {
     m_tabBar->blockSignals(false);
 
     loadPlaylistState(m_activePl);
+}
+
+QIcon MainWindow::playlistIcon(int index, int size) const {
+    if (index < 0 || index >= m_playlists.size()) return {};
+
+    const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+    if (size <= 24) {
+        return m_cfg.theme == "liquid"
+            ? MaterialIco::icon("library_music", theme.accent, size)
+            : Ico::music(theme.accent, size);
+    }
+
+    QString sourcePath = m_playlists[index].iconPath;
+    if (!QFile::exists(sourcePath) && !m_playlists[index].tracks.isEmpty())
+        sourcePath = trackIconPath(m_playlists[index].tracks.first());
+
+    QPixmap source(sourcePath);
+    if (!source.isNull()) {
+        const int side = qMin(source.width(), source.height());
+        const QRect crop((source.width() - side) / 2, (source.height() - side) / 2,
+                         side, side);
+        return QIcon(source.copy(crop).scaled(size, size, Qt::IgnoreAspectRatio,
+                                               Qt::SmoothTransformation));
+    }
+
+    QPixmap fallback(size, size);
+    fallback.fill(Qt::transparent);
+    QPainter painter(&fallback);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QLinearGradient gradient(0, 0, size, size);
+    gradient.setColorAt(0, theme.surface2);
+    gradient.setColorAt(1, theme.mantle);
+    painter.setPen(QPen(theme.overlay0, 1));
+    painter.setBrush(gradient);
+    painter.drawRoundedRect(QRectF(0.5, 0.5, size - 1.0, size - 1.0),
+                            size * 0.22, size * 0.22);
+    const int glyphSize = qMax(14, int(size * 0.48));
+    const QIcon glyph = m_cfg.theme == "liquid"
+        ? MaterialIco::icon("library_music", theme.accent, glyphSize)
+        : Ico::music(theme.accent, glyphSize);
+    glyph.paint(&painter, QRect((size - glyphSize) / 2, (size - glyphSize) / 2,
+                                glyphSize, glyphSize));
+    return QIcon(fallback);
+}
+
+void MainWindow::editPlaylistDetails(int index) {
+    if (index < 0 || index >= m_playlists.size()) return;
+
+    QDialog dialog(this);
+    dialog.setWindowTitle("Оформление плейлиста");
+    dialog.setObjectName("playlistDetailsDialog");
+    dialog.setMinimumWidth(440);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(22, 20, 22, 18);
+    layout->setSpacing(12);
+
+    auto *title = new QLabel("Оформление плейлиста", &dialog);
+    title->setObjectName("playlistBrowserTitle");
+    auto *subtitle = new QLabel("Название, короткое описание и своя обложка", &dialog);
+    subtitle->setObjectName("playlistBrowserSubtitle");
+    layout->addWidget(title);
+    layout->addWidget(subtitle);
+
+    auto *nameEdit = new QLineEdit(m_playlists[index].name, &dialog);
+    nameEdit->setPlaceholderText("Название плейлиста");
+    auto *descriptionEdit = new QTextEdit(&dialog);
+    descriptionEdit->setPlaceholderText("Например: музыка для вечерних прогулок");
+    descriptionEdit->setPlainText(m_playlists[index].description);
+    descriptionEdit->setFixedHeight(82);
+    layout->addWidget(new QLabel("Название", &dialog));
+    layout->addWidget(nameEdit);
+    layout->addWidget(new QLabel("Описание", &dialog));
+    layout->addWidget(descriptionEdit);
+
+    auto *coverRow = new QHBoxLayout;
+    auto *preview = new QLabel(&dialog);
+    preview->setObjectName("playlistCoverPreview");
+    preview->setFixedSize(88, 88);
+    preview->setAlignment(Qt::AlignCenter);
+    preview->setPixmap(playlistIcon(index, 78).pixmap(78, 78));
+    auto *coverButtons = new QVBoxLayout;
+    auto *chooseCover = new QPushButton("Выбрать обложку...", &dialog);
+    auto *clearCover = new QPushButton("Сбросить", &dialog);
+    coverButtons->addWidget(chooseCover);
+    coverButtons->addWidget(clearCover);
+    coverButtons->addStretch();
+    coverRow->addWidget(preview);
+    coverRow->addLayout(coverButtons);
+    coverRow->addStretch();
+    layout->addLayout(coverRow);
+
+    QString selectedCover = m_playlists[index].iconPath;
+    connect(chooseCover, &QPushButton::clicked, &dialog, [&] {
+        const QString path = QFileDialog::getOpenFileName(
+            &dialog, "Выбрать обложку", QString(),
+            "Изображения (*.png *.jpg *.jpeg *.webp *.bmp)");
+        if (path.isEmpty()) return;
+        QPixmap image(path);
+        if (image.isNull()) return;
+        selectedCover = path;
+        const int side = qMin(image.width(), image.height());
+        const QRect crop((image.width() - side) / 2, (image.height() - side) / 2,
+                         side, side);
+        preview->setPixmap(image.copy(crop).scaled(78, 78, Qt::IgnoreAspectRatio,
+                                                    Qt::SmoothTransformation));
+    });
+    connect(clearCover, &QPushButton::clicked, &dialog, [&] {
+        selectedCover.clear();
+        const QString previous = m_playlists[index].iconPath;
+        m_playlists[index].iconPath.clear();
+        preview->setPixmap(playlistIcon(index, 78).pixmap(78, 78));
+        m_playlists[index].iconPath = previous;
+    });
+
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Save)->setText("Сохранить");
+    buttons->button(QDialogButtonBox::Cancel)->setText("Отмена");
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    if (dialog.exec() != QDialog::Accepted || nameEdit->text().trimmed().isEmpty()) return;
+
+    QString storedCover;
+    if (!selectedCover.isEmpty()) {
+        QPixmap image(selectedCover);
+        if (!image.isNull()) {
+            const int side = qMin(image.width(), image.height());
+            const QRect crop((image.width() - side) / 2, (image.height() - side) / 2,
+                             side, side);
+            const QPixmap normalized = image.copy(crop).scaled(
+                512, 512, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            const QString directory = QStandardPaths::writableLocation(
+                QStandardPaths::AppDataLocation) + "/playlist-icons";
+            QDir().mkpath(directory);
+            const QByteArray key = (selectedCover + QString::number(
+                QFileInfo(selectedCover).lastModified().toMSecsSinceEpoch())).toUtf8();
+            storedCover = directory + "/" + QCryptographicHash::hash(
+                key, QCryptographicHash::Sha1).toHex() + ".png";
+            if (!normalized.save(storedCover, "PNG")) storedCover.clear();
+        }
+    }
+
+    m_playlists[index].name = nameEdit->text().trimmed();
+    m_playlists[index].description = descriptionEdit->toPlainText().trimmed();
+    m_playlists[index].iconPath = storedCover;
+    m_tabBar->setTabText(index, m_playlists[index].name);
+    m_tabBar->setTabIcon(index, playlistIcon(index, 18));
+    savePlaylistsToFile();
+}
+
+void MainWindow::showPlaylistBrowser() {
+    saveCurrentPlaylistState();
+
+    if (!m_playlistBrowserPage) {
+        m_playlistBrowserPage = new QWidget(m_playlistPanel);
+        m_playlistBrowserPage->setObjectName("playlistBrowserPage");
+        auto *layout = new QVBoxLayout(m_playlistBrowserPage);
+        layout->setContentsMargins(8, 8, 8, 6);
+        layout->setSpacing(10);
+
+        auto *header = new QHBoxLayout;
+        auto *headerText = new QVBoxLayout;
+        auto *title = new QLabel("Мои плейлисты", m_playlistBrowserPage);
+        title->setObjectName("playlistBrowserTitle");
+        auto *subtitle = new QLabel(
+            "Открой плейлист или настрой его обложку и описание",
+            m_playlistBrowserPage);
+        subtitle->setObjectName("playlistBrowserSubtitle");
+        headerText->addWidget(title);
+        headerText->addWidget(subtitle);
+        auto *backButton = new QPushButton("К трекам", m_playlistBrowserPage);
+        header->addLayout(headerText);
+        header->addStretch();
+        header->addWidget(backButton);
+        layout->addLayout(header);
+
+        m_playlistBrowserGrid = new QListWidget(m_playlistBrowserPage);
+        m_playlistBrowserGrid->setObjectName("playlistBrowserGrid");
+        m_playlistBrowserGrid->setViewMode(QListView::IconMode);
+        m_playlistBrowserGrid->setFlow(QListView::LeftToRight);
+        m_playlistBrowserGrid->setWrapping(true);
+        m_playlistBrowserGrid->setResizeMode(QListView::Adjust);
+        m_playlistBrowserGrid->setMovement(QListView::Static);
+        m_playlistBrowserGrid->setSelectionMode(QAbstractItemView::SingleSelection);
+        m_playlistBrowserGrid->setIconSize({112, 112});
+        m_playlistBrowserGrid->setGridSize({178, 174});
+        m_playlistBrowserGrid->setSpacing(4);
+        layout->addWidget(m_playlistBrowserGrid, 1);
+
+        auto *buttonRow = new QHBoxLayout;
+        auto *newButton = new QPushButton("Новый плейлист", m_playlistBrowserPage);
+        auto *editButton = new QPushButton("Обложка и описание", m_playlistBrowserPage);
+        auto *openButton = new QPushButton("Открыть", m_playlistBrowserPage);
+        openButton->setObjectName("playlistBrowserOpen");
+        buttonRow->addWidget(newButton);
+        buttonRow->addWidget(editButton);
+        buttonRow->addStretch();
+        buttonRow->addWidget(openButton);
+        layout->addLayout(buttonRow);
+
+        auto openSelected = [this] {
+            if (!m_playlistBrowserGrid || !m_playlistBrowserGrid->currentItem()) return;
+            const int index = m_playlistBrowserGrid->currentItem()
+                                  ->data(Qt::UserRole).toInt();
+            if (index < 0 || index >= m_playlists.size()) return;
+            m_tabBar->setCurrentIndex(index);
+            showPlaylistTracks();
+        };
+        connect(m_playlistBrowserGrid, &QListWidget::itemDoubleClicked,
+                m_playlistBrowserPage, [openSelected](QListWidgetItem *) {
+                    openSelected();
+                });
+        connect(openButton, &QPushButton::clicked,
+                m_playlistBrowserPage, openSelected);
+        connect(backButton, &QPushButton::clicked,
+                this, &MainWindow::showPlaylistTracks);
+        connect(newButton, &QPushButton::clicked, m_playlistBrowserPage, [this] {
+            newPlaylist();
+            showPlaylistBrowser();
+        });
+        connect(editButton, &QPushButton::clicked, m_playlistBrowserPage, [this] {
+            if (!m_playlistBrowserGrid || !m_playlistBrowserGrid->currentItem()) return;
+            editPlaylistDetails(m_playlistBrowserGrid->currentItem()
+                                    ->data(Qt::UserRole).toInt());
+            refreshPlaylistBrowser();
+        });
+
+        auto *panelLayout = qobject_cast<QVBoxLayout *>(m_playlistPanel->layout());
+        if (panelLayout) panelLayout->addWidget(m_playlistBrowserPage, 1);
+    }
+
+    refreshPlaylistBrowser();
+    m_searchEdit->hide();
+    m_playlistInfo->hide();
+    m_playlistUpBtn->hide();
+    m_playlistDownBtn->hide();
+    m_playlistRemoveBtn->hide();
+    m_playlistClearBtn->hide();
+    m_playlistWidget->hide();
+    m_playlistBrowserPage->show();
+    m_modernHomeBtn->setChecked(false);
+}
+
+void MainWindow::showPlaylistTracks() {
+    if (m_playlistBrowserPage) m_playlistBrowserPage->hide();
+    m_searchEdit->show();
+    m_playlistInfo->show();
+    m_playlistUpBtn->show();
+    m_playlistDownBtn->show();
+    m_playlistRemoveBtn->show();
+    m_playlistClearBtn->show();
+    m_playlistWidget->show();
+    m_modernHomeBtn->setChecked(true);
+}
+
+void MainWindow::refreshPlaylistBrowser() {
+    if (!m_playlistBrowserGrid) return;
+    const int selected = m_playlistBrowserGrid->currentItem()
+        ? m_playlistBrowserGrid->currentItem()->data(Qt::UserRole).toInt()
+        : m_activePl;
+    m_playlistBrowserGrid->clear();
+    for (int i = 0; i < m_playlists.size(); ++i) {
+        QString description = m_playlists[i].description.simplified();
+        if (description.isEmpty()) description = "Без описания";
+        if (description.size() > 24)
+            description = description.left(23) + QString::fromUtf8("…");
+        auto *item = new QListWidgetItem(
+            playlistIcon(i, 112),
+            QString("%1\n%2\n%3 треков")
+                .arg(m_playlists[i].name, description)
+                .arg(m_playlists[i].tracks.size()));
+        item->setData(Qt::UserRole, i);
+        item->setTextAlignment(Qt::AlignHCenter);
+        item->setToolTip(m_playlists[i].description);
+        m_playlistBrowserGrid->addItem(item);
+        if (i == selected) m_playlistBrowserGrid->setCurrentItem(item);
+    }
+    if (!m_playlistBrowserGrid->currentItem() && m_playlistBrowserGrid->count() > 0)
+        m_playlistBrowserGrid->setCurrentRow(0);
+}
+
+void MainWindow::showSearchOverlay() {
+    if (m_cfg.theme != "liquid" || !m_cfg.modernLayout) {
+        showPlaylistTracks();
+        m_searchEdit->setFocus();
+        m_searchEdit->selectAll();
+        return;
+    }
+
+    showPlaylistTracks();
+    if (!m_searchPopup) {
+        m_searchDimmer = new QPushButton(m_contentShell);
+        m_searchDimmer->setObjectName("searchDimmer");
+        m_searchDimmer->setCursor(Qt::ArrowCursor);
+        m_searchDimmer->setStyleSheet(
+            "QPushButton#searchDimmer{background:rgba(2,8,18,168);border:none;border-radius:0;}"
+            "QPushButton#searchDimmer:hover{background:rgba(2,8,18,168);}");
+        connect(m_searchDimmer, &QPushButton::clicked,
+                this, &MainWindow::hideSearchOverlay);
+
+        m_searchPopup = new LiquidGlassWidget(m_contentShell);
+        m_searchPopup->setObjectName("searchPopup");
+        auto *popupLayout = new QHBoxLayout(m_searchPopup);
+        popupLayout->setContentsMargins(18, 12, 18, 12);
+        popupLayout->setSpacing(10);
+        auto *searchIcon = new QLabel(m_searchPopup);
+        searchIcon->setPixmap(MaterialIco::icon(
+            "search", ThemeManager::palette("liquid").accent, 24).pixmap(24, 24));
+        searchIcon->setFixedSize(24, 24);
+        m_searchPopupEdit = new QLineEdit(m_searchPopup);
+        m_searchPopupEdit->setObjectName("searchPopupEdit");
+        m_searchPopupEdit->setPlaceholderText(
+            "Найти по названию, исполнителю или альбому");
+        m_searchPopupEdit->setClearButtonEnabled(true);
+        m_searchPopupEdit->installEventFilter(this);
+        popupLayout->addWidget(searchIcon);
+        popupLayout->addWidget(m_searchPopupEdit, 1);
+        connect(m_searchPopupEdit, &QLineEdit::textChanged,
+                m_searchEdit, &QLineEdit::setText);
+        connect(m_searchEdit, &QLineEdit::textChanged,
+                m_searchPopupEdit, &QLineEdit::setText);
+        connect(m_searchPopupEdit, &QLineEdit::returnPressed,
+                this, &MainWindow::hideSearchOverlay);
+    }
+
+    const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+    if (auto *glass = dynamic_cast<LiquidGlassWidget *>(m_searchPopup))
+        glass->setGlassEnabled(true, theme.accent);
+
+    m_searchDimmer->setGeometry(m_contentShell->rect());
+    m_searchDimmer->show();
+    m_searchDimmer->raise();
+
+    const QPoint buttonPos = m_modernSearchBtn->mapTo(m_contentShell, QPoint(0, 0));
+    const QRect startRect(buttonPos.x(), buttonPos.y(),
+                          qMax(120, m_modernSearchBtn->width()),
+                          m_modernSearchBtn->height());
+    const int targetWidth = qMin(680, qMax(360, m_contentShell->width() - 100));
+    const QRect targetRect((m_contentShell->width() - targetWidth) / 2,
+                           qMax(72, m_contentShell->height() / 7),
+                           targetWidth, 68);
+    m_searchPopup->setGeometry(startRect);
+    m_searchPopup->show();
+    m_searchPopup->raise();
+
+    auto *geometryAnimation = new QPropertyAnimation(m_searchPopup, "geometry", this);
+    geometryAnimation->setDuration(300);
+    geometryAnimation->setStartValue(startRect);
+    geometryAnimation->setEndValue(targetRect);
+    geometryAnimation->setEasingCurve(QEasingCurve::OutCubic);
+    geometryAnimation->start(QAbstractAnimation::DeleteWhenStopped);
+
+    auto *dimmerEffect = new QGraphicsOpacityEffect(m_searchDimmer);
+    m_searchDimmer->setGraphicsEffect(dimmerEffect);
+    auto *fade = new QPropertyAnimation(dimmerEffect, "opacity", this);
+    fade->setDuration(220);
+    fade->setStartValue(0.0);
+    fade->setEndValue(1.0);
+    fade->setEasingCurve(QEasingCurve::OutCubic);
+    fade->start(QAbstractAnimation::DeleteWhenStopped);
+
+    m_searchPopupEdit->setText(m_searchEdit->text());
+    m_searchPopupEdit->setFocus();
+    m_searchPopupEdit->selectAll();
+}
+
+void MainWindow::hideSearchOverlay() {
+    if (!m_searchPopup || !m_searchPopup->isVisible()) return;
+    auto *fade = new QPropertyAnimation(m_searchPopup, "windowOpacity", this);
+    fade->setDuration(150);
+    fade->setStartValue(1.0);
+    fade->setEndValue(0.0);
+    fade->setEasingCurve(QEasingCurve::InCubic);
+    connect(fade, &QPropertyAnimation::finished, this, [this] {
+        m_searchPopup->hide();
+        m_searchPopup->setWindowOpacity(1.0);
+        m_searchDimmer->hide();
+        m_searchEdit->setFocus();
+    });
+    fade->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 
@@ -4509,6 +5996,8 @@ void MainWindow::savePlaylistsToFile() {
         QJsonObject obj;
         obj["name"]         = pl.name;
         obj["currentTrack"] = pl.currentTrack;
+        obj["description"]  = pl.description;
+        obj["iconPath"]     = pl.iconPath;
         QJsonArray tracks;
         for (const QUrl &u : pl.tracks) tracks.append(u.toString());
         obj["tracks"] = tracks;
@@ -4545,10 +6034,13 @@ void MainWindow::loadPlaylistsFromFile() {
         PlaylistEntry entry;
         entry.name         = obj["name"].toString();
         entry.currentTrack = obj["currentTrack"].toInt(-1);
+        entry.description  = obj["description"].toString();
+        entry.iconPath     = obj["iconPath"].toString();
         for (const QJsonValue &t : obj["tracks"].toArray())
             entry.tracks.append(QUrl(t.toString()));
         m_playlists.append(entry);
-        m_tabBar->addTab(entry.name);
+        const int index = m_tabBar->addTab(entry.name);
+        m_tabBar->setTabIcon(index, playlistIcon(index, 18));
     }
 
     m_activePl = qBound(0, root["activePl"].toInt(0), m_playlists.size() - 1);
@@ -4611,6 +6103,50 @@ void MainWindow::openSettings() {
     };
 
     SettingsDialog dlg(m_cfg, this);
+    connect(&dlg, &SettingsDialog::clearStreamCacheRequested, this, [this, &dlg] {
+        const QString cacheDir = streamCacheDir();
+        const QString normalizedCache = QDir::cleanPath(cacheDir) + "/";
+        const QString currentPath = m_player->source().isLocalFile()
+            ? QDir::cleanPath(m_player->source().toLocalFile()) : QString();
+        const bool currentUsesCache = !currentPath.isEmpty()
+            && currentPath.startsWith(normalizedCache, Qt::CaseInsensitive);
+
+        if (currentUsesCache) {
+            m_player->stop();
+            stopEqEngine();
+            m_player->setSource(QUrl());
+            resetWaveformUi();
+        }
+
+        QPointer<SettingsDialog> dialog(&dlg);
+        QTimer::singleShot(currentUsesCache ? 300 : 0, this,
+                           [this, dialog, cacheDir, normalizedCache, currentUsesCache] {
+            QDir cache(cacheDir);
+            const bool removed = !cache.exists() || cache.removeRecursively();
+            const bool recreated = QDir().mkpath(cacheDir);
+            const bool success = removed && recreated;
+
+            if (success) {
+                for (auto it = m_streamTracks.begin(); it != m_streamTracks.end(); ++it) {
+                    const QString path = QDir::cleanPath(it->localPath);
+                    if (!path.isEmpty() && path.startsWith(normalizedCache, Qt::CaseInsensitive))
+                        it->localPath.clear();
+                }
+                saveStreamTracksToFile();
+            }
+
+            if (!dialog) return;
+            if (success) {
+                dialog->finishCacheClear(true, currentUsesCache
+                    ? "Кэш удалён. Трек, использовавший файл из кэша, остановлен."
+                    : "Все скачанные по ссылкам файлы удалены.");
+            } else {
+                dialog->finishCacheClear(false,
+                    "Некоторые файлы остались заняты другим процессом. Закрой другие "
+                    "экземпляры EchoBox и попробуй ещё раз.");
+            }
+        });
+    });
     connect(&dlg, &SettingsDialog::applied, this, [this, applyEqSettings](const AppSettings &s) {
         const AppSettings prev = m_cfg;
         const bool appIconChanged = s.appIconStyle != prev.appIconStyle;
@@ -4622,7 +6158,8 @@ void MainWindow::openSettings() {
             || s.artShape != prev.artShape
             || s.appIconStyle != prev.appIconStyle
             || s.showVisualizer != prev.showVisualizer
-            || s.showStatusBar != prev.showStatusBar;
+            || s.showStatusBar != prev.showStatusBar
+            || s.modernLayout != prev.modernLayout;
         m_cfg = s;
         if (appearanceChanged) applyTheme();
         if (appIconChanged) syncShellShortcutIcon();
@@ -4688,7 +6225,8 @@ void MainWindow::scanLibrary()
         saveCurrentPlaylistState();
     const QString name = "Библиотека";
         m_playlists.append({name, {}, -1});
-        m_tabBar->addTab(name);
+        const int index = m_tabBar->addTab(name);
+        m_tabBar->setTabIcon(index, playlistIcon(index, 18));
         m_libraryPlIdx = m_playlists.size() - 1;
         m_tabBar->setCurrentIndex(m_libraryPlIdx);
     } else {

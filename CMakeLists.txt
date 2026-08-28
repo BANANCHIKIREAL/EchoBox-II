@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(EchoBoxII VERSION 3.2.1 LANGUAGES CXX)
+project(EchoBoxII VERSION 4.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,6 +42,7 @@ qt_add_executable(EchoBoxII
     src/thememanager.h
     src/logo.h
     src/icons.h
+    src/materialicons.h
     src/discordrpc.h
     src/discordrpc.cpp
     src/settingsdialog.h

@@ -29,13 +29,36 @@ inline QPixmap createLogo(int size, const ThemePalette &baseTheme,
         {"ruby", ":/app-icons/ruby.png"},
         {"cloud", ":/app-icons/cloud.png"},
         {"ember", ":/app-icons/ember.png"},
+        {"liquid", ":/app-icons/liquid.png"},
     };
     const auto illustratedIt = illustratedIcons.constFind(iconStyle);
     if (illustratedIt != illustratedIcons.cend()) {
         const QPixmap source(illustratedIt.value());
         if (!source.isNull()) {
-            const QPixmap scaled = source.scaled(
+            QPixmap scaled = source.scaled(
                 size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            if (size <= 64 && size >= 16) {
+                const QImage original = scaled.toImage().convertToFormat(QImage::Format_ARGB32);
+                QImage sharpened = original;
+                for (int y = 1; y < original.height() - 1; ++y) {
+                    for (int x = 1; x < original.width() - 1; ++x) {
+                        const QColor center = original.pixelColor(x, y);
+                        const QColor left = original.pixelColor(x - 1, y);
+                        const QColor right = original.pixelColor(x + 1, y);
+                        const QColor top = original.pixelColor(x, y - 1);
+                        const QColor bottom = original.pixelColor(x, y + 1);
+                        auto channel = [](int c, int a, int b, int d, int e) {
+                            return qBound(0, int(c + 0.42 * (4 * c - a - b - d - e)), 255);
+                        };
+                        sharpened.setPixelColor(x, y, QColor(
+                            channel(center.red(), left.red(), right.red(), top.red(), bottom.red()),
+                            channel(center.green(), left.green(), right.green(), top.green(), bottom.green()),
+                            channel(center.blue(), left.blue(), right.blue(), top.blue(), bottom.blue()),
+                            center.alpha()));
+                    }
+                }
+                scaled = QPixmap::fromImage(sharpened);
+            }
             QPixmap result(size, size);
             result.fill(Qt::transparent);
             QPainter iconPainter(&result);
@@ -43,7 +66,8 @@ inline QPixmap createLogo(int size, const ThemePalette &baseTheme,
             iconPainter.setRenderHint(QPainter::SmoothPixmapTransform);
             QPainterPath roundedMask;
             roundedMask.addRoundedRect(QRectF(0, 0, size, size),
-                                       size * 0.17, size * 0.17);
+                                       size * (iconStyle == "liquid" ? 0.29 : 0.17),
+                                       size * (iconStyle == "liquid" ? 0.29 : 0.17));
             iconPainter.setClipPath(roundedMask);
             iconPainter.drawPixmap(0, 0, scaled);
             iconPainter.end();

@@ -27,3 +27,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 Source: https://github.com/tabler/tabler-icons
+
+## Google Material Symbols Rounded
+
+The Liquid Glass theme uses selected SVG symbols from Google Material Symbols Rounded.
+
+Apache License 2.0
+
+Copyright 2022 Google LLC
+
+Source: https://github.com/google/material-design-icons

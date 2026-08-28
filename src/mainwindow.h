@@ -37,6 +37,7 @@ class QLabel;
 class QProgressBar;
 class QPropertyAnimation;
 class QToolButton;
+class QPushButton;
 class QListWidget;
 class QListWidgetItem;
 class QLineEdit;
@@ -57,6 +58,8 @@ struct PlaylistEntry {
     QString      name;
     QList<QUrl>  tracks;
     int          currentTrack = -1;
+    QString      description;
+    QString      iconPath;
 };
 
 struct StreamTrackInfo {
@@ -126,6 +129,12 @@ private slots:
     void onTabChanged(int index);
     void onTabDoubleClicked(int index);
     void onTabContextMenu(const QPoint &pos);
+    void showPlaylistBrowser();
+    void showPlaylistTracks();
+    void refreshPlaylistBrowser();
+    void showSearchOverlay();
+    void hideSearchOverlay();
+    void editPlaylistDetails(int index);
     void showAbout();
     void checkForUpdates(bool manual);
     void downloadAndInstallUpdate(const QString &assetUrl, const QString &tag,
@@ -146,6 +155,10 @@ private:
     void setupTray();
     void setupConnections();
     void applyTheme();
+    void applyModernLayout();
+    void showMiniMoreMenu();
+    QIcon uiIcon(const QString &symbol, const QColor &color, int size,
+                 const QIcon &fallback) const;
     void syncShellShortcutIcon();
     void loadSettings();
     void saveSettings();
@@ -158,6 +171,7 @@ private:
     void saveCurrentPlaylistState();
     void loadPlaylistState(int index);
     void deletePlaylist(int index);
+    QIcon playlistIcon(int index, int size) const;
 
     void openStreamUrl(const QString &link);
     bool looksLikeDirectMediaUrl(const QUrl &url) const;
@@ -253,6 +267,19 @@ private:
 
     AuroraWidget   *m_aurora      = nullptr;
     QFrame         *m_separator   = nullptr;
+    QWidget        *m_contentShell = nullptr;
+    QWidget        *m_mainColumn   = nullptr;
+    QWidget        *m_modernSidebar = nullptr;
+    QLabel         *m_modernBrandIcon = nullptr;
+    QToolButton    *m_modernHomeBtn = nullptr;
+    QToolButton    *m_modernSearchBtn = nullptr;
+    QToolButton    *m_modernPlaylistsBtn = nullptr;
+    QToolButton    *m_modernLibraryBtn = nullptr;
+    QToolButton    *m_modernOpenBtn = nullptr;
+    QToolButton    *m_modernFolderBtn = nullptr;
+    QToolButton    *m_modernLinkBtn = nullptr;
+    QToolButton    *m_modernSettingsBtn = nullptr;
+    class QVBoxLayout *m_mainColumnLayout = nullptr;
 
     QWidget        *m_topWidget   = nullptr;
     QStackedWidget *m_mediaStack  = nullptr;
@@ -271,6 +298,7 @@ private:
     QPropertyAnimation *m_loadingAnim = nullptr;
     QWidget     *m_miniLoadingPanel = nullptr;
     QLabel      *m_miniLoadingIcon = nullptr;
+    QLabel      *m_miniLoadingText = nullptr;
     QProgressBar *m_miniLoadingBar = nullptr;
     QLabel      *m_miniLoadingPercent = nullptr;
 
@@ -302,6 +330,12 @@ private:
     WaveformSlider *m_miniWaveform  = nullptr;
     QToolButton *m_miniShuffleBtn = nullptr;
     QToolButton *m_miniRepeatBtn  = nullptr;
+    QToolButton *m_miniMoreBtn    = nullptr;
+    QMenu       *m_miniMoreMenu   = nullptr;
+    QMenu       *m_miniSpeedMenu  = nullptr;
+    QAction     *m_miniStopAct    = nullptr;
+    QAction     *m_miniShuffleAct = nullptr;
+    QAction     *m_miniRepeatAct  = nullptr;
     QSlider     *m_miniVolSlider  = nullptr;
     QToolButton *m_miniMuteBtn    = nullptr;
     QToolButton *m_miniDockBtn    = nullptr;
@@ -314,10 +348,16 @@ private:
     QLineEdit   *m_searchEdit     = nullptr;
     QLabel      *m_playlistInfo   = nullptr;
     QListWidget *m_playlistWidget = nullptr;
+    QWidget     *m_playlistBrowserPage = nullptr;
+    QListWidget *m_playlistBrowserGrid = nullptr;
+    QPushButton *m_searchDimmer = nullptr;
+    QWidget     *m_searchPopup = nullptr;
+    QLineEdit   *m_searchPopupEdit = nullptr;
     QToolButton *m_playlistUpBtn  = nullptr;
     QToolButton *m_playlistDownBtn = nullptr;
     QToolButton *m_playlistRemoveBtn = nullptr;
     QToolButton *m_playlistClearBtn = nullptr;
+    QToolButton *m_newPlaylistBtn = nullptr;
 
     QVector<PlaylistEntry> m_playlists;
     int                    m_activePl = 0;

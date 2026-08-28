@@ -8,5 +8,6 @@
         <file alias="ruby.png">app_icons/ruby.png</file>
         <file alias="cloud.png">app_icons/cloud.png</file>
         <file alias="ember.png">app_icons/ember.png</file>
+        <file alias="liquid.png">app_icons/liquid.png</file>
     </qresource>
 </RCC>

@@ -25,6 +25,7 @@ QString rgba(const QColor &color, int alpha) {
 
 QList<ThemeInfo> ThemeManager::themes() {
     return {
+        {"liquid",   "Liquid Glass Beta", "Полупрозрачное стекло с холодными бликами"},
         {"mocha",    "Mocha",          "Мягкий фиолетовый Catppuccin"},
         {"midnight", "Midnight Neon",  "Глубокий синий с неоновым голубым"},
         {"sakura",   "Sakura Night",   "Тёмная слива и тёплый розовый"},
@@ -42,7 +43,14 @@ QList<ThemeInfo> ThemeManager::themes() {
 ThemePalette ThemeManager::palette(const QString &requestedId, const QColor &customAccent) {
     const QString id = requestedId.toLower();
     ThemePalette p;
-    if (id == "midnight") {
+    if (id == "liquid") {
+        p = makePalette(id, "#10182a", "#131e33", "#08101f",
+                        "#263a59", "#345176", "#486d97",
+                        "#6688ad", "#86a5c5", "#a9bfd6",
+                        "#f4f8ff", "#a9bad0", "#d6e3f2",
+                        "#9ed7ff", "#c5a9ff", "#8ce9c5", "#ff8faa",
+                        "#ffd38e", "#86eadb", "#8fdcff", "#ffc1e9");
+    } else if (id == "midnight") {
         p = makePalette(id, "#0b1020", "#080c18", "#050812",
                         "#17213a", "#223052", "#30456f",
                         "#52678e", "#7184a8", "#8fa0bd",

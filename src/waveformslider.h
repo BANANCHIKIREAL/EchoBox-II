@@ -20,9 +20,12 @@ public:
     void setValue(int v);
     int  value() const { return m_value; }
 
-    void loadWaveform(const QUrl &url, qint64 durationMs);
+    void loadWaveform(const QUrl &url, qint64 durationMs,
+                      const QVector<float> &resumePeaks = {});
     void clearWaveform();
     void setPeaks(const QVector<float> &peaks);
+    void setPartialPeaks(const QVector<float> &peaks);
+    static constexpr int targetBinCount() { return 500; }
 
     void setAccentColor(const QColor &c);
     void setTrackColor (const QColor &c);
@@ -32,7 +35,7 @@ signals:
     void sliderPressed();
     void sliderReleased();
     void valueChanged(int v);
-    void peaksReady(QUrl url, QVector<float> peaks);
+    void peaksReady(QUrl url, qint64 durationMs, QVector<float> peaks);
     void waveformReady(QUrl url, qint64 durationMs, QVector<float> peaks);
 
 protected:
@@ -62,6 +65,7 @@ private:
     bool   m_decodeFinalized = false;
     quint64 m_decodeGeneration = 0;
     qint64 m_durationMs    = 0;
+    qint64 m_resumeSamplesPending = 0;
     QUrl   m_waveformUrl;
 
     QAudioDecoder *m_decoder = nullptr;

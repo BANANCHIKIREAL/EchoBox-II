@@ -33,6 +33,7 @@ struct AppSettings {
     bool showTrackIcons = true;
     bool showStatusBar  = true;
     bool closeToTray    = true;
+    bool modernLayout   = false;
 
     bool discordEnabled = true;
 
@@ -61,9 +62,11 @@ public:
 
 public slots:
     void browseFolder(QLineEdit *edit);
+    void finishCacheClear(bool success, const QString &message);
 
 signals:
     void applied(const AppSettings &s);
+    void clearStreamCacheRequested();
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -86,6 +89,7 @@ private:
     void collectResult();
     void connectLive();
     void refreshSidebarIcons();
+    void updateLiquidLockedControls();
     void refreshPresetSwatches();
     void refreshThemePreview();
     void setEqPreset(const float (&gains)[kEqBandCount]);
@@ -116,6 +120,7 @@ private:
     QCheckBox *m_iconsChk      = nullptr;
     QCheckBox *m_statusBarChk  = nullptr;
     QCheckBox *m_trayChk       = nullptr;
+    QCheckBox *m_modernLayoutChk = nullptr;
 
     QCheckBox *m_discordChk    = nullptr;
     QComboBox *m_cookiesBrowserCombo = nullptr;

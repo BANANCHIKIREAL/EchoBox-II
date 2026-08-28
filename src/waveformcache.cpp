@@ -129,3 +129,23 @@ void WaveformCache::save(const QUrl &url, qint64 duration,
     for (int i = kDiskEntries; i < files.size(); ++i)
         QFile::remove(files[i].absoluteFilePath());
 }
+
+void WaveformCache::rememberPartial(const QUrl &url, qint64 duration,
+                                    const QVector<float> &peaks) {
+    if (!url.isValid() || duration <= 0 || peaks.isEmpty()) return;
+    remember(keyFor(url, duration), peaks);
+}
+
+bool WaveformCache::remove(const QUrl &url, qint64 duration) {
+    if (!url.isValid() || duration <= 0) return false;
+    const QString key = keyFor(url, duration);
+    m_memory.remove(key);
+    m_memoryOrder.removeAll(key);
+    const QString path = directoryPath() + "/" + key + ".wfc";
+    return !QFile::exists(path) || QFile::remove(path);
+}
+
+void WaveformCache::clearMemory() {
+    m_memory.clear();
+    m_memoryOrder.clear();
+}

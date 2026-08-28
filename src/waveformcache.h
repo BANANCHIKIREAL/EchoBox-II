@@ -9,6 +9,10 @@ class WaveformCache {
 public:
     bool load(const QUrl &url, qint64 duration, QVector<float> *peaks);
     void save(const QUrl &url, qint64 duration, const QVector<float> &peaks);
+    void rememberPartial(const QUrl &url, qint64 duration,
+                         const QVector<float> &peaks);
+    bool remove(const QUrl &url, qint64 duration);
+    void clearMemory();
 
     static QString directoryPath();
 

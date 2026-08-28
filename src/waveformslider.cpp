@@ -40,7 +40,8 @@ void WaveformSlider::setValue(int v) {
 }
 
 
-void WaveformSlider::loadWaveform(const QUrl &url, qint64 durationMs) {
+void WaveformSlider::loadWaveform(const QUrl &url, qint64 durationMs,
+                                  const QVector<float> &resumePeaks) {
     clearWaveform();
     if (!url.isValid() || durationMs <= 0) return;
 
@@ -48,12 +49,15 @@ void WaveformSlider::loadWaveform(const QUrl &url, qint64 durationMs) {
     m_durationMs    = durationMs;
     m_bins          = TARGET_BINS;
     m_peaks.assign(m_bins, 0.f);
-    m_binsFilled    = 0;
+    const int resumed = qMin(int(resumePeaks.size()), m_bins);
+    for (int i = 0; i < resumed; ++i) m_peaks[i] = resumePeaks[i];
+    m_binsFilled    = resumed;
     m_binAccum      = 0.f;
     m_binCount      = 0;
     m_lastSharedBin = 0;
     m_decodeFinalized = false;
     m_samplesPerBin = 0;
+    m_resumeSamplesPending = resumed > 0 ? -1 : 0;
 
     auto *decoder = new QAudioDecoder(this);
     m_decoder = decoder;
@@ -88,6 +92,22 @@ void WaveformSlider::setPeaks(const QVector<float> &peaks) {
     update();
 }
 
+void WaveformSlider::setPartialPeaks(const QVector<float> &peaks) {
+    ++m_decodeGeneration;
+    if (m_decoder) {
+        QAudioDecoder *decoder = m_decoder;
+        m_decoder = nullptr;
+        decoder->stop();
+        decoder->deleteLater();
+    }
+    m_bins = TARGET_BINS;
+    m_peaks.assign(m_bins, 0.f);
+    m_binsFilled = qMin(int(peaks.size()), m_bins);
+    for (int i = 0; i < m_binsFilled; ++i) m_peaks[i] = peaks[i];
+    m_decodeFinalized = false;
+    update();
+}
+
 void WaveformSlider::clearWaveform() {
     ++m_decodeGeneration;
     if (m_decoder) {
@@ -104,6 +124,7 @@ void WaveformSlider::clearWaveform() {
     m_lastSharedBin = 0;
     m_decodeFinalized = false;
     m_samplesPerBin = 0;
+    m_resumeSamplesPending = 0;
     m_durationMs    = 0;
     update();
 }
@@ -130,6 +151,8 @@ void WaveformSlider::onBufferReady() {
         if (m_samplesPerBin == 0 && sr > 0 && m_durationMs > 0) {
             const qint64 totalFrames = qint64(sr) * m_durationMs / 1000;
             m_samplesPerBin = qMax<qint64>(1, totalFrames / (m_bins * ANALYSIS_STRIDE));
+            if (m_resumeSamplesPending < 0)
+                m_resumeSamplesPending = qint64(m_binsFilled) * m_samplesPerBin;
         }
         if (m_samplesPerBin == 0) continue;
 
@@ -148,6 +171,10 @@ void WaveformSlider::onBufferReady() {
             }
         };
         for (int i = 0; i < frames && m_binsFilled < m_bins; i += ANALYSIS_STRIDE) {
+            if (m_resumeSamplesPending > 0) {
+                --m_resumeSamplesPending;
+                continue;
+            }
             float v = 0.f;
             for (int c = 0; c < ch; ++c)
                 v += std::abs(sampleAt(i * ch + c));
@@ -170,7 +197,7 @@ void WaveformSlider::onBufferReady() {
 
     if (m_binsFilled - m_lastSharedBin >= 10 || m_binsFilled == m_bins) {
         m_lastSharedBin = m_binsFilled;
-        emit peaksReady(m_waveformUrl,
+        emit peaksReady(m_waveformUrl, m_durationMs,
                         QVector<float>(m_peaks.begin(), m_peaks.begin() + m_binsFilled));
     }
 }
@@ -189,7 +216,7 @@ void WaveformSlider::onDecodeFinished() {
     m_peaks.resize(m_binsFilled);
     update();
     const QVector<float> completed(m_peaks.begin(), m_peaks.end());
-    emit peaksReady(m_waveformUrl, completed);
+    emit peaksReady(m_waveformUrl, m_durationMs, completed);
     emit waveformReady(m_waveformUrl, m_durationMs, completed);
 }
 
@@ -212,8 +239,14 @@ void WaveformSlider::paintEvent(QPaintEvent *) {
     const int cursorX = int(progress * (W - 1));
 
     if (m_peaks.empty()) {
-        p.setBrush(m_track);   p.drawRect(0,     mid-1, W,        2);
-        p.setBrush(m_accent);  p.drawRect(0,     mid-1, cursorX,  2);
+        QColor emptyLine = m_track;
+        emptyLine.setAlpha(110);
+        p.setBrush(emptyLine);
+        p.drawRoundedRect(QRectF(8, mid - 1, qMax(0, W - 16), 2), 1, 1);
+        if (m_max > m_min) {
+            p.setBrush(m_accent);
+            p.drawRoundedRect(QRectF(8, mid - 1, qMax(0, cursorX - 8), 2), 1, 1);
+        }
     } else {
         const int   n     = int(m_peaks.size());
         const float barW  = float(W) / n;
