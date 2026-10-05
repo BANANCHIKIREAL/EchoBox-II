@@ -29,7 +29,6 @@ inline QPixmap createLogo(int size, const ThemePalette &baseTheme,
         {"ruby", ":/app-icons/ruby.png"},
         {"cloud", ":/app-icons/cloud.png"},
         {"ember", ":/app-icons/ember.png"},
-        {"liquid", ":/app-icons/liquid.png"},
     };
     const auto illustratedIt = illustratedIcons.constFind(iconStyle);
     if (illustratedIt != illustratedIcons.cend()) {
@@ -66,8 +65,7 @@ inline QPixmap createLogo(int size, const ThemePalette &baseTheme,
             iconPainter.setRenderHint(QPainter::SmoothPixmapTransform);
             QPainterPath roundedMask;
             roundedMask.addRoundedRect(QRectF(0, 0, size, size),
-                                       size * (iconStyle == "liquid" ? 0.29 : 0.17),
-                                       size * (iconStyle == "liquid" ? 0.29 : 0.17));
+                                       size * 0.17, size * 0.17);
             iconPainter.setClipPath(roundedMask);
             iconPainter.drawPixmap(0, 0, scaled);
             iconPainter.end();

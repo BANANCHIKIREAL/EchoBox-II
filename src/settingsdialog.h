@@ -89,7 +89,6 @@ private:
     void collectResult();
     void connectLive();
     void refreshSidebarIcons();
-    void updateLiquidLockedControls();
     void refreshPresetSwatches();
     void refreshThemePreview();
     void setEqPreset(const float (&gains)[kEqBandCount]);

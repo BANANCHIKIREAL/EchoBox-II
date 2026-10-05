@@ -10,6 +10,8 @@
 #include "materialicons.h"
 #include "discordrpc.h"
 #include "thememanager.h"
+#include "microuter.h"
+#include "micdeckdialog.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -22,6 +24,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
+#include <QFormLayout>
 #include <QDialog>
 #include <QToolButton>
 #include <QSlider>
@@ -77,9 +80,17 @@
 #include <QAudioSource>
 #include <QMediaDevices>
 #include <QDialogButtonBox>
+#include <QCheckBox>
 #include <QProcess>
 #include <QDateTime>
 #include <QCoreApplication>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -541,6 +552,23 @@ MainWindow::MainWindow(QWidget *parent)
     m_player      = new QMediaPlayer(this);
     m_audioOutput = new QAudioOutput(this);
     m_player->setAudioOutput(m_audioOutput);
+    m_micRouter = new MicRouter(m_player, this);
+    connect(m_micRouter, &MicRouter::activeChanged, this, [this](bool active) {
+        m_micRouting = active;
+        if (m_micBtn) {
+            const ThemePalette theme = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor);
+            const QColor color = active ? theme.accent : theme.subtext0;
+            m_micBtn->setIcon(MaterialIco::icon("mic", color, 18));
+            m_micBtn->setToolTip(active
+                ? "Микшер работает · открыть настройки микрофона"
+                : "Открыть настройки микрофона и микшера");
+        }
+        statusBar()->showMessage(active ? "Музыка и голос направляются в виртуальный микрофон"
+                                        : "Вывод в виртуальный микрофон остановлен", 3500);
+    });
+    connect(m_micRouter, &MicRouter::routingError, this, [this](const QString &message) {
+        statusBar()->showMessage(message, 7000);
+    });
 
     m_eqEngine = new AudioEngine(this);
     connect(m_eqEngine, &AudioEngine::ready, this, [this]{
@@ -625,7 +653,13 @@ MainWindow::MainWindow(QWidget *parent)
     QTimer::singleShot(3000, this, [this]{ if (m_cfg.autoCheckUpdates) checkForUpdates(false); });
 }
 
-MainWindow::~MainWindow() { apoCloseRing(); saveSettings(); }
+MainWindow::~MainWindow() {
+#ifdef Q_OS_WIN
+    for (int i = 0; i < 9; ++i) UnregisterHotKey(HWND(winId()), 7100 + i);
+#endif
+    apoCloseRing();
+    saveSettings();
+}
 
 bool MainWindow::startsMinimized() const { return m_cfg.startMinimized; }
 
@@ -658,6 +692,10 @@ void MainWindow::setupMenuBar() {
                   this, &MainWindow::previous);
     pm->addAction("Следующий",  QKeySequence(Qt::CTRL | Qt::Key_Right),
                   this, &MainWindow::next);
+    pm->addSeparator();
+    pm->addAction("Настройки микрофона и микшера",
+                  QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M),
+                  this, &MainWindow::toggleMicRouting);
     pm->addSeparator();
 
     m_shuffleAct = pm->addAction("Перемешать", this, &MainWindow::toggleShuffle);
@@ -797,6 +835,15 @@ void MainWindow::setupUi() {
     m_mainColumnLayout = new QVBoxLayout(m_mainColumn);
     m_mainColumnLayout->setContentsMargins(0, 0, 0, 0);
     m_mainColumnLayout->setSpacing(0);
+    m_contentStack = new QStackedWidget(m_mainColumn);
+    m_contentStack->setObjectName("mainContentStack");
+    m_playerPage = new QWidget(m_contentStack);
+    m_playerPage->setObjectName("playerPage");
+    auto *playerPageLayout = new QVBoxLayout(m_playerPage);
+    playerPageLayout->setContentsMargins(0, 0, 0, 0);
+    playerPageLayout->setSpacing(0);
+    m_contentStack->addWidget(m_playerPage);
+    m_mainColumnLayout->addWidget(m_contentStack, 1);
     shellLayout->addWidget(m_modernSidebar);
     shellLayout->addWidget(m_mainColumn, 1);
     root->addWidget(m_contentShell, 1);
@@ -956,14 +1003,10 @@ void MainWindow::setupUi() {
     m_speedCombo->setToolTip("Скорость воспроизведения");
     m_speedCombo->setFixedWidth(68);
 
-    m_micBtn = mkBtn("ЛКМ — музыка в микрофон вкл/выкл\nПКМ — громкость и «только музыка»", "toggleBtn", 30);
-    m_micBtn->setCheckable(true);
-    m_micBtn->setIcon(Ico::microphone(QColor(0xa6, 0xad, 0xc8), 18));
+    m_micBtn = mkBtn("Открыть настройки микрофона и микшера", "toggleBtn", 30);
+    m_micBtn->setIcon(MaterialIco::icon("mic", QColor(0xa6, 0xad, 0xc8), 18));
     m_micBtn->setIconSize({18, 18});
-    m_micBtn->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(m_micBtn, &QToolButton::customContextMenuRequested,
-            this, [this]{ showMicMenu(); });
-    m_micBtn->setVisible(false);
+    m_micBtn->setVisible(true);
 
     QHBoxLayout *c2 = new QHBoxLayout;
     c2->setSpacing(6);
@@ -980,12 +1023,12 @@ void MainWindow::setupUi() {
     rl->addSpacing(4);
 
     topL->addWidget(rp, 1);
-    m_mainColumnLayout->addWidget(m_topWidget);
+    playerPageLayout->addWidget(m_topWidget);
 
     m_separator = new QFrame(this);
     m_separator->setFrameShape(QFrame::HLine);
     m_separator->setObjectName("separator");
-    m_mainColumnLayout->addWidget(m_separator);
+    playerPageLayout->addWidget(m_separator);
 
     m_miniBar = new LiquidGlassWidget(this);
     m_miniBar->setObjectName("miniBar");
@@ -1264,8 +1307,29 @@ void MainWindow::setupUi() {
     m_playlistWidget->setItemDelegate(g_delegate);
     m_playlistWidget->setIconSize({36, 36});
     plL->addWidget(m_playlistWidget, 1);
-    m_mainColumnLayout->addWidget(m_playlistPanel, 1);
+    playerPageLayout->addWidget(m_playlistPanel, 1);
 
+    m_micSettingsDialog = new QDialog(this);
+    m_micSettingsDialog->setObjectName("micSettingsDialog");
+    m_micSettingsDialog->setWindowTitle("Микрофон и микшер — EchoBox II");
+    m_micSettingsDialog->setWindowModality(Qt::NonModal);
+    m_micSettingsDialog->setMinimumSize(900, 430);
+    m_micSettingsDialog->resize(1120, 500);
+    auto *micSettingsLayout = new QVBoxLayout(m_micSettingsDialog);
+    micSettingsLayout->setContentsMargins(0, 0, 0, 0);
+    m_micDeckPage = new MicDeckDialog(
+        m_micRouter, &m_settings, m_micSettingsDialog, true);
+    micSettingsLayout->addWidget(m_micDeckPage);
+
+    connect(m_micDeckPage, &MicDeckDialog::trackFilesAdded,
+            this, [this](const QStringList &paths) {
+        QList<QUrl> urls;
+        for (const QString &path : paths) {
+            const QUrl url = QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath());
+            if (!m_playlist.contains(url)) urls.append(url);
+        }
+        if (!urls.isEmpty()) addFiles(urls);
+    });
     connect(m_modernHomeBtn, &QToolButton::clicked, this, [this] {
         showPlaylistTracks();
         m_searchEdit->clear();
@@ -1452,6 +1516,10 @@ void MainWindow::applyTheme() {
             background-color: transparent;
         }
         QWidget#contentShell, QWidget#modernMainColumn { background: transparent; }
+        QWidget#mainNavigation {
+            background-color: #181825;
+            border-bottom: 1px solid #313244;
+        }
         QWidget#modernSidebar {
             background-color: #181825;
             border-right: 1px solid #313244;
@@ -1495,9 +1563,10 @@ void MainWindow::applyTheme() {
             background-color: #1e1e2e;
             border: 1px solid #45475a;
             border-radius: 6px;
-            padding: 4px 0;
+            padding: 4px 8px;
         }
-        QMenu::item { padding: 6px 24px 6px 12px; }
+        QMenu::item { padding: 6px 24px 6px 28px; }
+        QMenu::icon { margin-left: 7px; }
         QMenu::item:selected { background-color: #45475a; border-radius: 4px; }
         QMenu::item:disabled { color: #585b70; }
         QMenu::separator { height: 1px; background: #313244; margin: 4px 0; }
@@ -1860,6 +1929,48 @@ void MainWindow::applyTheme() {
             font-weight: 700;
         }
         QLabel#playlistBrowserSubtitle { color: #7f849c; }
+        QWidget#micDeckPage { background: transparent; }
+        QFrame#soundpadRoutingPanel {
+            background-color: #181825;
+            border: 1px solid #313244;
+            border-radius: 14px;
+        }
+        QLabel#soundpadCaption {
+            color: #a6adc8;
+            font-size: 11px;
+            font-weight: 700;
+        }
+        QLabel#soundpadSubtitle, QLabel#soundpadCardMeta,
+        QLabel#soundpadCardPath { color: #9399b2; }
+        QLabel#soundpadHint { color: #a6adc8; }
+        QLabel#soundpadNotice {
+            color: #bac2de;
+            background-color: #252537;
+            border: 1px solid #313244;
+            border-radius: 9px;
+            padding: 9px 12px;
+        }
+        QLabel#soundpadSectionTitle {
+            color: #cdd6f4;
+            font-size: 18px;
+            font-weight: 700;
+        }
+        QScrollArea#soundpadScroll {
+            background: transparent;
+            border: none;
+        }
+        QWidget#soundpadCardsHost { background: transparent; }
+        QFrame#soundpadCard {
+            background-color: #181825;
+            border: 1px solid #313244;
+            border-radius: 12px;
+        }
+        QFrame#soundpadCard:hover { border-color: #45475a; }
+        QLabel#soundpadCardTitle {
+            color: #cdd6f4;
+            font-size: 17px;
+            font-weight: 700;
+        }
         QLabel#playlistCoverPreview {
             background-color: #181825;
             border: 1px solid #45475a;
@@ -2351,8 +2462,12 @@ void MainWindow::applyTheme() {
         m_miniDockBtn->setIcon(uiIcon(
             "vertical_align_top", dockColor, 14, Ico::dockTop(dockColor, 14)));
     }
-    if (m_micBtn) m_micBtn->setIcon(uiIcon(
-        "mic", secondaryIconColor, 18, Ico::microphone(secondaryIconColor, 18)));
+    if (m_micBtn) {
+        const QColor micColor = m_micRouter && m_micRouter->isActive()
+            ? theme.accent : secondaryIconColor;
+        m_micBtn->setIcon(uiIcon(
+            "mic", micColor, 18, Ico::microphone(micColor, 18)));
+    }
     if (m_openUrlAct) m_openUrlAct->setIcon(uiIcon(
         "link", secondaryIconColor, 18, Ico::link(secondaryIconColor, 18)));
     if (m_scanLibraryAct) m_scanLibraryAct->setIcon(uiIcon(
@@ -2681,8 +2796,18 @@ void MainWindow::loadSettings() {
     refreshRecentMenu();
 
     m_cfg.theme          = m_settings.value("cfg/theme", "mocha").toString();
+    bool storedThemeAvailable = false;
+    for (const ThemeInfo &theme : ThemeManager::themes()) {
+        if (theme.id == m_cfg.theme) {
+            storedThemeAvailable = true;
+            break;
+        }
+    }
+    if (!storedThemeAvailable) m_cfg.theme = "mocha";
     m_cfg.accentColor    = QColor(m_settings.value("cfg/accentColor", "#cba6f7").toString());
     if (!m_cfg.accentColor.isValid()) m_cfg.accentColor = QColor(0xcb,0xa6,0xf7);
+    if (!storedThemeAvailable)
+        m_cfg.accentColor = ThemeManager::defaultAccent(m_cfg.theme);
     m_cfg.fontSizeIdx    = m_settings.value("cfg/fontSizeIdx", 1).toInt();
     m_cfg.fontFamily     = m_settings.value("cfg/fontFamily",  "").toString();
     m_cfg.fontFilePath   = m_settings.value("cfg/fontFilePath","").toString();
@@ -2690,6 +2815,12 @@ void MainWindow::loadSettings() {
         QFontDatabase::addApplicationFont(m_cfg.fontFilePath);
     m_cfg.artShape       = m_settings.value("cfg/artShape", "rounded").toString();
     m_cfg.appIconStyle   = m_settings.value("cfg/appIconStyle", "classic").toString();
+    const QSet<QString> supportedIconStyles = {
+        "classic", "cosmic", "aurora", "sunset", "ocean", "mono",
+        "ruby", "cloud", "ember"
+    };
+    const bool storedIconAvailable = supportedIconStyles.contains(m_cfg.appIconStyle);
+    if (!storedIconAvailable) m_cfg.appIconStyle = "classic";
     m_cfg.autoPlay       = m_settings.value("cfg/autoPlay", false).toBool();
     m_cfg.showVisualizer = m_settings.value("cfg/showVisualizer", true).toBool();
     m_cfg.crossfadeSecs  = m_settings.value("cfg/crossfadeSecs", 0).toInt();
@@ -2700,6 +2831,7 @@ void MainWindow::loadSettings() {
     m_cfg.showStatusBar  = m_settings.value("cfg/showStatusBar", true).toBool();
     m_cfg.closeToTray    = m_settings.value("cfg/closeToTray", true).toBool();
     m_cfg.modernLayout   = m_settings.value("cfg/modernLayout", false).toBool();
+    if (!storedThemeAvailable) m_cfg.modernLayout = false;
     m_cfg.discordEnabled = m_settings.value("cfg/discordEnabled", true).toBool();
     m_cfg.ytDlpCookiesBrowser  = m_settings.value("cfg/ytDlpCookiesBrowser", "").toString();
     m_cfg.streamAudioQuality   = m_settings.value("cfg/streamAudioQuality", "best").toString();
@@ -2713,6 +2845,13 @@ void MainWindow::loadSettings() {
     for (int i = 0; i < kEqBandCount; ++i)
         m_cfg.eqBands[i] = m_settings.value(QString("cfg/eqBand%1").arg(i), 0.0).toFloat();
     m_cfg.launchOnStartup  = isLaunchOnStartupEnabled();
+
+    if (!storedThemeAvailable || !storedIconAvailable) {
+        m_settings.setValue("cfg/theme", m_cfg.theme);
+        m_settings.setValue("cfg/accentColor", m_cfg.accentColor.name());
+        m_settings.setValue("cfg/appIconStyle", m_cfg.appIconStyle);
+        m_settings.setValue("cfg/modernLayout", m_cfg.modernLayout);
+    }
 
     const bool alwaysOnTop = m_settings.value("view/alwaysOnTop", false).toBool();
     setWindowFlag(Qt::WindowStaysOnTopHint, alwaysOnTop);
@@ -3673,6 +3812,7 @@ void MainWindow::togglePlayPause() {
 }
 
 void MainWindow::stop() {
+    if (m_micRouter) m_micRouter->resetMusicStream();
     m_player->stop();
     stopEqEngine();
     popButtonIcon(m_stopBtn);
@@ -4176,6 +4316,7 @@ void MainWindow::onError(QMediaPlayer::Error /*e*/, const QString &msg) {
 
 void MainWindow::onAudioBuffer(const QAudioBuffer &buffer) {
     m_visualizer->feedAudioBuffer(buffer);
+    m_micRouter->feedMusicBuffer(buffer);
 
     if (m_aurora) {
         const float *data  = buffer.constData<float>();
@@ -4525,7 +4666,7 @@ void MainWindow::showAbout() {
     nameLbl->setAlignment(Qt::AlignHCenter);
     headerL->addWidget(nameLbl);
 
-    auto *verLbl = new QLabel("версия " + kAppVersion, header);
+    auto *verLbl = new QLabel("версия " + kAppVersion + " · Микшер", header);
     verLbl->setObjectName("aboutVersion");
     verLbl->setAlignment(Qt::AlignCenter);
     headerL->addWidget(verLbl, 0, Qt::AlignHCenter);
@@ -5798,6 +5939,7 @@ void MainWindow::hideSearchOverlay() {
 
 void MainWindow::applyVolume() {
     const float vol = m_volumeSlider->value() / 100.0f * m_fadeFactor;
+    if (m_micRouter) m_micRouter->setPlayerVolume(vol);
     if (m_eqActive) {
         m_audioOutput->setVolume(0.0f);
         m_eqEngine->setVolume(vol);
@@ -5807,6 +5949,7 @@ void MainWindow::applyVolume() {
 }
 
 void MainWindow::playerSeek(qint64 ms) {
+    if (m_micRouter) m_micRouter->resetMusicStream();
     m_player->setPosition(ms);
     if (m_eqActive) m_eqEngine->setPosition(ms);
 }
@@ -6364,107 +6507,93 @@ void MainWindow::updateDuplicateHighlights()
 
 void MainWindow::toggleMicRouting()
 {
-    if (m_micRouting) {
-        m_micRouting = false;
-        if (m_apoOpenTimer) { m_apoOpenTimer->stop(); }
-        apoCloseRing();
-        if (m_micBtn) m_micBtn->setChecked(false);
-        statusBar()->showMessage("Музыка в микрофон: выкл", 2500);
-        return;
-    }
-
-    m_micRouting = true;
-    if (m_micBtn) m_micBtn->setChecked(true);
-
-    if (!m_apoOpenTimer) {
-        m_apoOpenTimer = new QTimer(this);
-        m_apoOpenTimer->setInterval(500);
-        connect(m_apoOpenTimer, &QTimer::timeout, this, &MainWindow::apoTryOpenRing);
-    }
-    apoTryOpenRing();
-    if (!m_apoRing) {
-        m_apoOpenTimer->start();
-        statusBar()->showMessage(
-            "Музыка в микрофон: ожидаю микрофон... "
-            "(открой голосовой чат; если не установлено — запусти apo\\install.bat)", 8000);
-    }
+    showMicMenu();
 }
 
 void MainWindow::showMicMenu()
 {
-    QMenu menu(this);
-
-    auto *hdr = menu.addAction(m_micRouting ? "Музыка в микрофон: ВКЛ" : "Музыка в микрофон: выкл");
-    hdr->setEnabled(false);
-    menu.addSeparator();
-
-    auto *blockAct = menu.addAction("Только музыка (заглушить микрофон)");
-    blockAct->setCheckable(true);
-    blockAct->setChecked(m_apoBlockVoice);
-    connect(blockAct, &QAction::toggled, this, [this](bool on){
-        m_apoBlockVoice = on;
-        apoPushControls();
-        statusBar()->showMessage(on ? "Только музыка — микрофон заглушён"
-                                    : "Микрофон + музыка", 2500);
-    });
-
-    auto *gateAct = menu.addAction("Шумоподавление голоса");
-    gateAct->setCheckable(true);
-    gateAct->setChecked(m_apoNoiseGate);
-    gateAct->setToolTip("Убирает посторонний шум (клики, фон), оставляя голос");
-    connect(gateAct, &QAction::toggled, this, [this](bool on){
-        m_apoNoiseGate = on;
-        apoPushControls();
-        statusBar()->showMessage(on ? "Шумоподавление: вкл" : "Шумоподавление: выкл", 2500);
-    });
-
-    auto *gateMenu = menu.addMenu("Сила шумоподавления");
-    struct { const char *label; float thr; } gates[] = {
-        {"Слабое (тихий фон)",   0.008f},
-        {"Среднее",              0.02f},
-        {"Сильное (шумно вокруг)",0.05f},
-    };
-    auto *ggrp = new QActionGroup(gateMenu);
-    ggrp->setExclusive(true);
-    for (auto &g : gates) {
-        auto *a = gateMenu->addAction(g.label);
-        a->setCheckable(true);
-        a->setActionGroup(ggrp);
-        if (qFuzzyCompare(m_apoGateThresh, g.thr)) a->setChecked(true);
-        const float thr = g.thr;
-        connect(a, &QAction::triggered, this, [this, thr]{
-            m_apoGateThresh = thr;
-            apoPushControls();
-            statusBar()->showMessage("Порог шумоподавления обновлён", 2000);
-        });
-    }
-
-    menu.addSeparator();
-    auto *volHdr = menu.addAction("Громкость музыки:");
-    volHdr->setEnabled(false);
-
-    struct { const char *label; float gain; } levels[] = {
-        {"50%", 0.5f}, {"100%", 1.0f}, {"150%", 1.5f},
-        {"200%", 2.0f}, {"300%", 3.0f},
-    };
-    auto *grp = new QActionGroup(&menu);
-    grp->setExclusive(true);
-    for (auto &lv : levels) {
-        auto *a = menu.addAction(lv.label);
-        a->setCheckable(true);
-        a->setActionGroup(grp);
-        if (qFuzzyCompare(m_apoMusicGain, lv.gain)) a->setChecked(true);
-        const float g = lv.gain;
-        connect(a, &QAction::triggered, this, [this, g]{
-            m_apoMusicGain = g;
-            apoPushControls();
-            statusBar()->showMessage(
-                QString("Громкость музыки: %1%").arg(int(g * 100)), 2500);
-        });
-    }
-
-    menu.exec(QCursor::pos());
+    if (!m_micSettingsDialog) return;
+    m_micSettingsDialog->show();
+    m_micSettingsDialog->raise();
+    m_micSettingsDialog->activateWindow();
 }
+
+void MainWindow::showSoundpad()
+{
+    showMicMenu();
+}
+
+QString MainWindow::soundboardPathForUrl(const QUrl &url) const
+{
+    if (url.isLocalFile() && QFileInfo(url.toLocalFile()).isFile())
+        return QFileInfo(url.toLocalFile()).absoluteFilePath();
+    const auto stream = m_streamTracks.constFind(url);
+    if (stream != m_streamTracks.constEnd() && QFileInfo(stream->localPath).isFile())
+        return QFileInfo(stream->localPath).absoluteFilePath();
+    return {};
+}
+
+void MainWindow::syncSoundboardTracks()
+{
+    if (!m_micDeckPage) return;
+    QStringList paths;
+    QStringList titles;
+    for (const QUrl &url : std::as_const(m_playlist)) {
+        const QString path = soundboardPathForUrl(url);
+        if (path.isEmpty()) continue;
+        paths.append(path);
+        titles.append(trackDisplayTitle(url));
+    }
+    const QString playlistName = m_activePl >= 0 && m_activePl < m_playlists.size()
+        ? m_playlists.at(m_activePl).name
+        : QStringLiteral("Текущий плейлист");
+    m_micDeckPage->setTracks(paths, titles, playlistName);
+}
+
+void MainWindow::registerSoundboardHotkeys()
+{
+#ifdef Q_OS_WIN
+    const HWND handle = HWND(winId());
+    for (int i = 0; i < 9; ++i) UnregisterHotKey(handle, 7100 + i);
+
+    QStringList paths;
+    for (const QUrl &url : std::as_const(m_playlist)) {
+        const QString path = soundboardPathForUrl(url);
+        if (!path.isEmpty()) paths.append(path);
+    }
+    for (int i = 0; i < qMin(9, paths.size()); ++i)
+        RegisterHotKey(handle, 7100 + i, 0, UINT(VK_F1 + i));
+#endif
+}
+
+#ifdef Q_OS_WIN
+bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr *result)
+{
+    Q_UNUSED(eventType);
+    MSG *msg = static_cast<MSG *>(message);
+    if (msg && msg->message == WM_HOTKEY && msg->wParam >= 7100 && msg->wParam < 7109) {
+        QStringList paths;
+        for (const QUrl &url : std::as_const(m_playlist)) {
+            const QString path = soundboardPathForUrl(url);
+            if (!path.isEmpty()) paths.append(path);
+        }
+        const int index = int(msg->wParam) - 7100;
+        if (index < paths.size()) {
+            const QString path = paths[index];
+            if (m_micRouter->activeSound() == path) {
+                m_micRouter->stopSound();
+            } else {
+                QString error;
+                if (!m_micRouter->playSound(path, &error))
+                    statusBar()->showMessage(error, 5000);
+            }
+        }
+        if (result) *result = 0;
+        return true;
+    }
+    return QMainWindow::nativeEvent(eventType, message, result);
+}
+#endif
 
 void MainWindow::apoTryOpenRing()
 {

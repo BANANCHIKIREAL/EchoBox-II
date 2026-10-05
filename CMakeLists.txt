@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(EchoBoxII VERSION 4.2.0 LANGUAGES CXX)
+project(EchoBoxII VERSION 5.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -55,6 +55,10 @@ qt_add_executable(EchoBoxII
     src/libraryscanner.cpp
     src/audioengine.h
     src/audioengine.cpp
+    src/microuter.h
+    src/microuter.cpp
+    src/micdeckdialog.h
+    src/micdeckdialog.cpp
     assets/app_icons.qrc
     ${APP_ICON_SOURCES}
 )
@@ -91,3 +95,19 @@ set_target_properties(EchoBoxII PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE   TRUE
 )
+
+option(ECHOBOX_BUILD_MIC_ROUTE_SMOKE_TEST "Build the VB-CABLE routing smoke test" OFF)
+if(ECHOBOX_BUILD_MIC_ROUTE_SMOKE_TEST)
+    qt_add_executable(EchoBoxMicRouteSmoke
+        tests/microuter_smoke.cpp
+        src/microuter.cpp
+        src/microuter.h
+    )
+    target_include_directories(EchoBoxMicRouteSmoke PRIVATE src)
+    target_link_libraries(EchoBoxMicRouteSmoke PRIVATE
+        Qt6::Core
+        Qt6::Multimedia
+        Qt6::Widgets
+    )
+
+endif()

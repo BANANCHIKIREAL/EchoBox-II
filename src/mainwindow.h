@@ -36,6 +36,7 @@
 class QLabel;
 class QProgressBar;
 class QPropertyAnimation;
+class QDialog;
 class QToolButton;
 class QPushButton;
 class QListWidget;
@@ -51,6 +52,8 @@ class QVideoWidget;
 class QNetworkAccessManager;
 class Visualizer;
 class DiscordRPC;
+class MicRouter;
+class MicDeckDialog;
 
 enum class RepeatMode { Off, One, All };
 
@@ -77,6 +80,7 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
     bool startsMinimized() const;
+    void showSoundpad();
 
 protected:
     void dragEnterEvent(QDragEnterEvent *) override;
@@ -84,6 +88,10 @@ protected:
     void keyPressEvent(QKeyEvent *) override;
     void closeEvent(QCloseEvent *) override;
     bool eventFilter(QObject *obj, QEvent *ev) override;
+#ifdef Q_OS_WIN
+    bool nativeEvent(const QByteArray &eventType, void *message,
+                     qintptr *result) override;
+#endif
 
 private slots:
     void openFiles();
@@ -143,6 +151,7 @@ private slots:
                                   qint64 expectedSize);
     void openRecentFile(const QString &path);
     void openSettings();
+    void registerSoundboardHotkeys();
     void scanLibrary();
     void onLibraryBatch(QList<QUrl> batch);
     void onLibraryProgress(int found, int scanned);
@@ -269,6 +278,10 @@ private:
     QFrame         *m_separator   = nullptr;
     QWidget        *m_contentShell = nullptr;
     QWidget        *m_mainColumn   = nullptr;
+    QStackedWidget *m_contentStack = nullptr;
+    QWidget        *m_playerPage   = nullptr;
+    MicDeckDialog  *m_micDeckPage = nullptr;
+    QDialog        *m_micSettingsDialog = nullptr;
     QWidget        *m_modernSidebar = nullptr;
     QLabel         *m_modernBrandIcon = nullptr;
     QToolButton    *m_modernHomeBtn = nullptr;
@@ -399,6 +412,7 @@ private:
 
     QToolButton *m_micBtn        = nullptr;
     bool         m_micRouting    = false;
+    MicRouter   *m_micRouter     = nullptr;
     void        *m_apoMapping    = nullptr;
     void        *m_apoRing       = nullptr;
     QTimer      *m_apoOpenTimer  = nullptr;
@@ -411,6 +425,8 @@ private:
     void         apoFeed(const class QAudioBuffer &buffer);
     void         apoPushControls();
     void         showMicMenu();
+    void         syncSoundboardTracks();
+    QString      soundboardPathForUrl(const QUrl &url) const;
 
     AppSettings m_cfg;
 

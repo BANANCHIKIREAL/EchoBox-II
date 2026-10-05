@@ -28,9 +28,9 @@ SOFTWARE.
 
 Source: https://github.com/tabler/tabler-icons
 
-## Google Material Symbols Rounded
+## Google Material Symbols
 
-The Liquid Glass theme uses selected SVG symbols from Google Material Symbols Rounded.
+The interface uses selected SVG symbols from Google Material Symbols.
 
 Apache License 2.0
 

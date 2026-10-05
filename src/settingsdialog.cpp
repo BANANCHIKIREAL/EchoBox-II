@@ -182,7 +182,7 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
         const QString sectionId = QString::fromLatin1(sec.id);
         auto *item = new QListWidgetItem(
             settingsSectionIcon(sectionId, initialPalette.subtext0,
-                                initialPalette.id == "liquid"),
+                                false),
             "  " + sec.title);
         item->setData(Qt::UserRole, sectionId);
         item->setSizeHint(QSize(0, 46));
@@ -228,7 +228,6 @@ SettingsDialog::SettingsDialog(const AppSettings &s, QWidget *parent)
     root->addWidget(footer);
 
     connectLive();
-    updateLiquidLockedControls();
 }
 
 
@@ -296,7 +295,7 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
     l->addLayout(themeRow);
     refreshThemePreview();
 
-    m_modernLayoutChk = new QCheckBox("Liquid Glass");
+    m_modernLayoutChk = new QCheckBox("Современная компоновка");
     m_modernLayoutChk->setChecked(m_result.modernLayout);
     m_modernLayoutChk->setToolTip(
         "Боковая навигация, просторная библиотека и панель управления снизу");
@@ -311,7 +310,6 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
         m_result.theme = m_themeCombo->itemData(index).toString();
         setAccentPreset(ThemeManager::defaultAccent(m_result.theme));
         refreshThemePreview();
-        updateLiquidLockedControls();
         liveApply();
     });
 
@@ -339,7 +337,7 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
         {"aurora", "Aurora"}, {"sunset", "Sunset"},
         {"ocean", "Ocean"}, {"mono", "Obsidian"},
         {"ruby", "Ruby"}, {"cloud", "Cloud"},
-        {"ember", "Ember"}, {"liquid", "Liquid"},
+        {"ember", "Ember"},
     };
     int selectedIconRow = 0;
     for (const auto &entry : appIcons) {
@@ -357,18 +355,6 @@ void SettingsDialog::buildAppearanceTab(QWidget *tab) {
     m_appIconList->setCurrentRow(selectedIconRow);
     l->addWidget(m_appIconList);
     m_liveWidgets << m_appIconList;
-
-    connect(m_modernLayoutChk, &QCheckBox::toggled, this, [this](bool enabled) {
-        if (!enabled) return;
-        const int liquidTheme = m_themeCombo->findData("liquid");
-        if (liquidTheme >= 0) m_themeCombo->setCurrentIndex(liquidTheme);
-        for (int row = 0; row < m_appIconList->count(); ++row) {
-            if (m_appIconList->item(row)->data(Qt::UserRole).toString() == "liquid") {
-                m_appIconList->setCurrentRow(row);
-                break;
-            }
-        }
-    });
 
     l->addWidget(makeSep());
 
@@ -904,26 +890,7 @@ void SettingsDialog::refreshSidebarIcons() {
             ? palette.accent : palette.subtext0;
         item->setIcon(settingsSectionIcon(
             item->data(Qt::UserRole).toString(), color,
-            palette.id == "liquid"));
-    }
-}
-
-void SettingsDialog::updateLiquidLockedControls() {
-    const bool liquid = m_themeCombo
-        && m_themeCombo->currentData().toString() == "liquid";
-    if (m_vizChk) {
-        m_vizChk->setChecked(liquid ? true : m_vizChk->isChecked());
-        m_vizChk->setEnabled(!liquid);
-        m_vizChk->setToolTip(liquid
-            ? "В Liquid Glass визуализатор является частью оформления"
-            : QString());
-    }
-    if (m_statusBarChk) {
-        m_statusBarChk->setChecked(liquid ? false : m_statusBarChk->isChecked());
-        m_statusBarChk->setEnabled(!liquid);
-        m_statusBarChk->setToolTip(liquid
-            ? "В Liquid Glass используется собственная нижняя панель"
-            : QString());
+            false));
     }
 }
 
