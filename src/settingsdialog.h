@@ -10,6 +10,7 @@ class QComboBox;
 class QFontComboBox;
 class QLineEdit;
 class QListWidget;
+class QSpinBox;
 class QStackedWidget;
 class QShowEvent;
 
@@ -136,7 +137,7 @@ private:
 
     QCheckBox *m_eqEnabledChk = nullptr;
     class QSlider *m_eqSliders[kEqBandCount] = { nullptr };
-    QLabel    *m_eqValueLabels[kEqBandCount] = { nullptr };
+    QSpinBox  *m_eqPercentSpins[kEqBandCount] = { nullptr };
 
     QList<QObject*> m_liveWidgets;
 };

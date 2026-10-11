@@ -12,6 +12,8 @@
 #include "thememanager.h"
 #include "microuter.h"
 #include "micdeckdialog.h"
+#include "windowsmediasession.h"
+#include "volumerange.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -51,6 +53,8 @@
 #include <QFrame>
 #include <QLineEdit>
 #include <QComboBox>
+#include <QSpinBox>
+#include <QSignalBlocker>
 #include <QSystemTrayIcon>
 #include <QStackedWidget>
 #include <QVideoWidget>
@@ -94,6 +98,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QUrlQuery>
 #include <QDesktopServices>
 #include <QPushButton>
 #include <QStyle>
@@ -573,28 +578,33 @@ MainWindow::MainWindow(QWidget *parent)
     m_eqEngine = new AudioEngine(this);
     connect(m_eqEngine, &AudioEngine::ready, this, [this]{
         const QUrl current = m_player->source();
-        const bool stillWanted = m_eqPending && m_cfg.eqEnabled &&
-            current == m_eqSource && current.isLocalFile();
+        const bool stillWanted = m_eqPending &&
+            (m_cfg.eqEnabled || m_volumePercent > 100) &&
+            current == m_eqSource && current.isLocalFile() &&
+            m_playlist.value(m_currentIndex) == current;
         if (!stillWanted) return;
 
         m_eqEngine->setPosition(m_player->position());
-        m_eqEngine->setVolume(m_volumeSlider->value() / 100.0f * m_fadeFactor);
+        m_eqEngine->setVolume(m_volumePercent / 100.0f * m_fadeFactor);
         if (m_player->playbackState() == QMediaPlayer::PlayingState)
             m_eqEngine->play();
         m_eqPending = false;
         m_eqActive = true;
+        if (m_eqLoadingBanner) hideLoadingBanner();
         applyVolume();
-        statusBar()->showMessage("Эквалайзер включён", 2500);
+        statusBar()->showMessage(m_cfg.eqEnabled ? "Эквалайзер включён"
+                                               : "Усиление громкости включено", 2500);
     });
     connect(m_eqEngine, &AudioEngine::decodeError, this, [this](const QString &msg){
         if (!m_eqPending && !m_eqActive) return;
         m_eqPending = false;
         m_eqActive = false;
         m_eqSource = QUrl();
+        if (m_eqLoadingBanner) hideLoadingBanner();
         applyVolume();
-        showCopyableError("Эквалайзер недоступен для этого трека",
-            "Не удалось декодировать трек для эквалайзера — играет обычный "
-            "плеер без него.\n\n" + msg);
+        showCopyableError("Обработка звука недоступна для этого трека",
+            "Не удалось декодировать трек для эквалайзера или усиления — играет "
+            "обычный плеер без обработки.\n\n" + msg);
     });
 
     m_metaReader = new QMediaPlayer(this);
@@ -650,10 +660,19 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowIcon(icon);
     syncShellShortcutIcon();
 
+#ifdef Q_OS_WIN
+    QTimer::singleShot(0, this, [this] {
+        m_windowsMediaSession = std::make_unique<WindowsMediaSession>(
+            reinterpret_cast<void*>(winId()));
+        updateWindowsMediaSession();
+    });
+#endif
+
     QTimer::singleShot(3000, this, [this]{ if (m_cfg.autoCheckUpdates) checkForUpdates(false); });
 }
 
 MainWindow::~MainWindow() {
+    m_windowsMediaSession.reset();
 #ifdef Q_OS_WIN
     for (int i = 0; i < 9; ++i) UnregisterHotKey(HWND(winId()), 7100 + i);
 #endif
@@ -987,14 +1006,21 @@ void MainWindow::setupUi() {
     m_muteBtn = mkBtn("Выкл. звук  M", "muteBtn", 30);
 
     m_volumeSlider = new QSlider(Qt::Horizontal, this);
-    m_volumeSlider->setRange(0, 100);
-    m_volumeSlider->setValue(70);
+    m_volumeSlider->setRange(0, kPlayerVolumeSliderMaximum);
+    m_volumeSlider->setValue(playerVolumeToSlider(70));
     m_volumeSlider->setObjectName("volSlider");
     m_volumeSlider->setFixedWidth(130);
 
-    m_volumeLabel = new QLabel("70%", this);
-    m_volumeLabel->setObjectName("volLabel");
-    m_volumeLabel->setMinimumWidth(38);
+    m_volumeSpinBox = new QSpinBox(this);
+    m_volumeSpinBox->setObjectName("volumeSpinBox");
+    m_volumeSpinBox->setRange(0, kMaxPlayerVolumePercent);
+    m_volumeSpinBox->setSuffix("%");
+    m_volumeSpinBox->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    m_volumeSpinBox->setKeyboardTracking(false);
+    m_volumeSpinBox->setAlignment(Qt::AlignCenter);
+    m_volumeSpinBox->setFixedWidth(64);
+    m_volumeSpinBox->setValue(70);
+    m_volumeSpinBox->setToolTip("Громкость до 1000%. Значения выше 100% могут искажать звук.");
 
     m_speedCombo = new QComboBox(this);
     m_speedCombo->setObjectName("speedCombo");
@@ -1013,7 +1039,7 @@ void MainWindow::setupUi() {
     c2->addStretch();
     c2->addWidget(m_muteBtn);
     c2->addWidget(m_volumeSlider);
-    c2->addWidget(m_volumeLabel);
+    c2->addWidget(m_volumeSpinBox);
     c2->addSpacing(16);
     c2->addWidget(m_speedCombo);
     c2->addSpacing(12);
@@ -1117,7 +1143,8 @@ void MainWindow::setupUi() {
 
     m_miniVolSlider = new QSlider(Qt::Horizontal, this);
     m_miniVolSlider->setObjectName("volSlider");
-    m_miniVolSlider->setRange(0, 100); m_miniVolSlider->setValue(70);
+    m_miniVolSlider->setRange(0, kPlayerVolumeSliderMaximum);
+    m_miniVolSlider->setValue(playerVolumeToSlider(70));
     m_miniVolSlider->setFixedWidth(80);
 
     m_miniExpandBtn = new QToolButton(this);
@@ -1219,7 +1246,8 @@ void MainWindow::setupUi() {
     connect(m_miniRepeatBtn,  &QToolButton::clicked, this, &MainWindow::cycleRepeat);
     connect(m_miniMoreBtn,    &QToolButton::clicked, this, &MainWindow::showMiniMoreMenu);
     connect(m_miniMuteBtn,    &QToolButton::clicked, this, &MainWindow::toggleMute);
-    connect(m_miniVolSlider,  &QSlider::valueChanged, this, &MainWindow::setVolume);
+    connect(m_miniVolSlider, &QSlider::valueChanged, this,
+            [this](int position) { setVolume(playerVolumeFromSlider(position)); });
 
     m_miniBar->installEventFilter(this);
     m_miniTitle->installEventFilter(this);
@@ -1403,7 +1431,10 @@ void MainWindow::setupConnections() {
     connect(m_repeatBtn,    &QToolButton::clicked, this, &MainWindow::cycleRepeat);
     connect(m_muteBtn,      &QToolButton::clicked, this, &MainWindow::toggleMute);
     connect(m_micBtn,       &QToolButton::clicked, this, &MainWindow::toggleMicRouting);
-    connect(m_volumeSlider, &QSlider::valueChanged, this, &MainWindow::setVolume);
+    connect(m_volumeSlider, &QSlider::valueChanged, this,
+            [this](int position) { setVolume(playerVolumeFromSlider(position)); });
+    connect(m_volumeSpinBox, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &MainWindow::setVolume);
     connect(m_speedCombo,   QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::onSpeedChanged);
 
@@ -1767,7 +1798,7 @@ void MainWindow::applyTheme() {
         QListWidget#playlist::item:hover:!selected { background-color: #2a2b3d; }
         QListWidget#playlist::item:selected { background-color: #45475a; color: ACCENT; }
 
-        QLineEdit {
+        QLineEdit, QSpinBox {
             background-color: #181825;
             border: 1px solid #313244;
             border-radius: 6px;
@@ -1775,8 +1806,8 @@ void MainWindow::applyTheme() {
             color: #cdd6f4;
             selection-background-color: #45475a;
         }
-        QLineEdit:focus { border-color: ACCENT; }
-        QLineEdit:disabled { color: #6c7086; background-color: #1a1a27; }
+        QLineEdit:focus, QSpinBox:focus { border-color: ACCENT; }
+        QLineEdit:disabled, QSpinBox:disabled { color: #6c7086; background-color: #1a1a27; }
 
         QComboBox {
             background-color: #181825;
@@ -2573,7 +2604,7 @@ void MainWindow::applyTheme() {
     if (m_miniLoadingIcon)
         m_miniLoadingIcon->setPixmap(uiIcon(
             "download", theme.accent, 14, Ico::download(theme.accent, 14)).pixmap(14, 14));
-    setVolume(m_volumeSlider->value());
+    setVolume(m_volumePercent);
     updateRepeatButton();
 
     if (g_delegate) g_delegate->setTheme(theme);
@@ -2778,9 +2809,7 @@ void MainWindow::loadSettings() {
     restoreGeometry(m_settings.value("geometry").toByteArray());
 
     int vol = m_settings.value("volume", 70).toInt();
-    m_volumeSlider->setValue(vol);
-    m_audioOutput->setVolume(vol / 100.0f);
-    m_volumeLabel->setText(QString("%1%").arg(vol));
+    setVolume(vol);
 
     m_shuffle = m_settings.value("shuffle", false).toBool();
     m_shuffleBtn->setChecked(m_shuffle);
@@ -2869,7 +2898,7 @@ void MainWindow::loadSettings() {
 
 void MainWindow::saveSettings() {
     m_settings.setValue("geometry",   saveGeometry());
-    m_settings.setValue("volume",     m_volumeSlider->value());
+    m_settings.setValue("volume",     m_volumePercent);
     m_settings.setValue("shuffle",    m_shuffle);
     m_settings.setValue("repeat",     static_cast<int>(m_repeat));
     m_settings.setValue("speedIndex", m_speedCombo->currentIndex());
@@ -3381,6 +3410,7 @@ void MainWindow::playTrack(int index) {
     m_player->play();
     syncEqEngineToCurrentTrack();
     applyVolume();
+    updateWindowsMediaSession();
 
     statusBar()->showMessage(url.toLocalFile());
 
@@ -3407,6 +3437,27 @@ QString MainWindow::ytDlpPath() const {
     const QString installed = QStandardPaths::findExecutable("yt-dlp.exe");
     if (!installed.isEmpty()) return installed;
     return bundled;
+}
+
+static QUrl ytDlpSourceUrl(const QUrl &pageUrl)
+{
+    const QString host = pageUrl.host().toLower();
+    if (host != "www.tiktok.com" && host != "tiktok.com" && host != "m.tiktok.com")
+        return pageUrl;
+
+    static const QRegularExpression photoPath(
+        R"(^/@[A-Za-z0-9._]+/photo/([0-9]+)/?$)");
+    const QRegularExpressionMatch match = photoPath.match(pageUrl.path());
+    if (!match.hasMatch()) return pageUrl;
+
+    // The TikTok extractor accepts the same post ID under /video/ and exposes
+    // the slideshow's audio-only format. Keep pageUrl for the playlist/cache.
+    QUrl extractorUrl = pageUrl;
+    extractorUrl.setHost("www.tiktok.com");
+    extractorUrl.setPath(pageUrl.path().replace("/photo/", "/video/"));
+    extractorUrl.setQuery(QString());
+    extractorUrl.setFragment(QString());
+    return extractorUrl;
 }
 
 QString MainWindow::streamCacheDir() const {
@@ -3447,7 +3498,7 @@ void MainWindow::openUrlDialog() {
     bool ok = false;
     const QString link = QInputDialog::getText(
         this, "Открыть по ссылке",
-        "Ссылка на трек (SoundCloud, YouTube, Bandcamp, прямая ссылка\n"
+        "Ссылка на трек (TikTok, SoundCloud, YouTube, Bandcamp, прямая ссылка\n"
         "на аудиофайл и т.п. — всё, что понимает yt-dlp):",
         QLineEdit::Normal, QString(), &ok).trimmed();
     if (!ok || link.isEmpty()) return;
@@ -3638,6 +3689,48 @@ void MainWindow::fetchStreamThumbnail(const QUrl &pageUrl, const QString &thumbn
 
 void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
         std::function<void(bool, QString, QString, QString, QString, QString)> callback) {
+    const QString host = pageUrl.host().toLower();
+    if (host == "tiktok.com" || host == "www.tiktok.com" || host == "m.tiktok.com") {
+        static const QRegularExpression musicPath(R"(^/music/[^/]+-([0-9]+)/?$)");
+        const auto match = musicPath.match(pageUrl.path());
+        if (match.hasMatch()) {
+            QUrl apiUrl("https://www.tiktok.com/api/music/detail/");
+            QUrlQuery query;
+            query.addQueryItem("musicId", match.captured(1));
+            apiUrl.setQuery(query);
+            QNetworkRequest request(apiUrl);
+            request.setTransferTimeout(15000);
+            request.setRawHeader("Referer", "https://www.tiktok.com/");
+            QNetworkReply *reply = m_streamArtNam->get(request);
+            connect(reply, &QNetworkReply::finished, this,
+                [this, reply, callback] {
+                    const QByteArray body = reply->readAll();
+                    reply->deleteLater();
+                    const QJsonObject response = QJsonDocument::fromJson(body).object();
+                    const QJsonObject info = response.value("musicInfo").toObject();
+                    const QJsonObject music = info.value("music").isObject()
+                        ? info.value("music").toObject() : response.value("music").toObject();
+                    const QUrl audioUrl(music.value("playUrl").toString());
+                    if (audioUrl.scheme() != "https" || audioUrl.host().isEmpty()) {
+                        callback(false, {}, {}, {}, {},
+                            "TikTok не отдал аудиофайл по ссылке на звук. "
+                            "Попробуйте ссылку на конкретный ролик с этим звуком; "
+                            "для /music/ TikTok может требовать сессию браузера.");
+                        return;
+                    }
+                    const QString title = music.value("title").toString();
+                    QString artist = info.value("author").toString();
+                    if (artist.isEmpty()) artist = music.value("authorName").toString();
+                    downloadStreamTrack(audioUrl,
+                        [callback, title, artist](bool ok, QString path, QString, QString,
+                                                  QString thumb, QString error) {
+                            callback(ok, path, title, artist, thumb, error);
+                        });
+                });
+            return;
+        }
+    }
+
     const QString cacheDir = streamCacheDir();
     QDir().mkpath(cacheDir);
     const QString hash = QCryptographicHash::hash(
@@ -3654,7 +3747,8 @@ void MainWindow::downloadStreamTrack(const QUrl &pageUrl,
     QString format = "bestaudio/best";
     if (m_cfg.streamAudioQuality == "medium") format = "bestaudio[abr<=128]/bestaudio/best";
     else if (m_cfg.streamAudioQuality == "low") format = "bestaudio[abr<=64]/bestaudio/best";
-    args << "-f" << format << "--print-json" << "-o" << outTemplate << pageUrl.toString();
+    args << "-f" << format << "--print-json" << "-o" << outTemplate
+         << ytDlpSourceUrl(pageUrl).toString(QUrl::FullyEncoded);
 
     auto stderrData = QSharedPointer<QByteArray>::create();
     auto progressRemainder = QSharedPointer<QByteArray>::create();
@@ -3788,6 +3882,7 @@ void MainWindow::commitStreamPlayback(int index, const QUrl &pageUrl, const QUrl
     m_miniTitle->setText(mini);
     m_artistLabel->setText(artist);
     setWindowTitle("EchoBox II  —  " + mini);
+    updateWindowsMediaSession();
     statusBar()->showMessage(pageUrl.toString());
 
     if (m_discord && m_cfg.discordEnabled)
@@ -3875,28 +3970,40 @@ void MainWindow::playNext(bool respectRepeat) {
 }
 
 void MainWindow::setVolume(int v) {
+    v = qBound(0, v, kMaxPlayerVolumePercent);
+    m_volumePercent = v;
+    const int sliderPosition = playerVolumeToSlider(v);
+    if (m_volumeSlider) {
+        const QSignalBlocker blocker(m_volumeSlider);
+        m_volumeSlider->setValue(sliderPosition);
+        m_volumeSlider->setToolTip(QString("Громкость: %1%").arg(v));
+    }
+    if (m_miniVolSlider) {
+        const QSignalBlocker blocker(m_miniVolSlider);
+        m_miniVolSlider->setValue(sliderPosition);
+        m_miniVolSlider->setToolTip(QString("Громкость: %1%").arg(v));
+    }
+    if (m_volumeSpinBox) {
+        const QSignalBlocker blocker(m_volumeSpinBox);
+        m_volumeSpinBox->setValue(v);
+    }
     applyVolume();
-    m_volumeLabel->setText(QString("%1%").arg(v));
+    syncEqEngineToCurrentTrack();
     const int level = (v == 0) ? 0 : (v < 40) ? 1 : (v < 75) ? 2 : 3;
     const QColor vc = ThemeManager::palette(m_cfg.theme, m_cfg.accentColor).text;
     const QString volumeSymbol = level == 0 ? "volume_off" : "volume_up";
     m_muteBtn->setIcon(uiIcon(volumeSymbol, vc, 22, Ico::volume(level, vc, 22)));
     if (m_miniMuteBtn)
         m_miniMuteBtn->setIcon(uiIcon(volumeSymbol, vc, 18, Ico::volume(level, vc, 18)));
-    auto sync = [](QSlider *s, int val){
-        if (s && s->value() != val) { s->blockSignals(true); s->setValue(val); s->blockSignals(false); }
-    };
-    sync(m_volumeSlider,  v);
-    sync(m_miniVolSlider, v);
 }
 
 void MainWindow::toggleMute() {
     m_muted = !m_muted;
     if (m_muted) {
-        m_lastVolume = m_volumeSlider->value();
-        m_volumeSlider->setValue(0);
+        m_lastVolume = m_volumePercent;
+        setVolume(0);
     } else {
-        m_volumeSlider->setValue(m_lastVolume);
+        setVolume(m_lastVolume);
     }
     popButtonIcon(m_muteBtn);
     if (m_miniMuteBtn) popButtonIcon(m_miniMuteBtn);
@@ -4221,6 +4328,7 @@ void MainWindow::onPlaybackStateChanged(QMediaPlayer::PlaybackState state) {
         m_discord->updateActivity(m_titleLabel->text(), m_artistLabel->text(), playing);
     if (!playing)
         saveTrackPosition();
+    updateWindowsMediaSession();
 }
 
 void MainWindow::onMediaStatusChanged(QMediaPlayer::MediaStatus status) {
@@ -4275,6 +4383,8 @@ void MainWindow::onMetaDataChanged() {
 
     if (m_discord && m_cfg.discordEnabled && m_player->playbackState() == QMediaPlayer::PlayingState)
         m_discord->updateActivity(m_titleLabel->text(), m_artistLabel->text());
+
+    updateWindowsMediaSession();
 
     QImage img = meta.value(QMediaMetaData::CoverArtImage).value<QImage>();
     if (img.isNull()) img = meta.value(QMediaMetaData::ThumbnailImage).value<QImage>();
@@ -4384,6 +4494,7 @@ void MainWindow::fadeOutWidget(QWidget *w, int durationMs) {
 }
 
 void MainWindow::showLoadingBanner(const QString &text) {
+    m_eqLoadingBanner = false;
     m_loadingText->setText(text);
     m_miniLoadingText->setText(text);
     m_loadingBar->setRange(0, 100);
@@ -4446,6 +4557,7 @@ void MainWindow::setLoadingProgress(int percent) {
 }
 
 void MainWindow::hideLoadingBanner() {
+    m_eqLoadingBanner = false;
     m_miniLoadingPanel->setVisible(false);
     m_miniTitle->setVisible(true);
     m_miniWaveform->setVisible(true);
@@ -5418,9 +5530,9 @@ void MainWindow::keyPressEvent(QKeyEvent *e) {
         break;
     }
     case Qt::Key_Up:
-        m_volumeSlider->setValue(qMin(m_volumeSlider->value() + m_cfg.volumeStep, 100)); break;
+        setVolume(qMin(m_volumePercent + m_cfg.volumeStep, kMaxPlayerVolumePercent)); break;
     case Qt::Key_Down:
-        m_volumeSlider->setValue(qMax(m_volumeSlider->value() - m_cfg.volumeStep, 0));   break;
+        setVolume(qMax(m_volumePercent - m_cfg.volumeStep, 0)); break;
     case Qt::Key_Delete:
         removeSelectedTracks(); break;
     case Qt::Key_F:
@@ -5938,14 +6050,32 @@ void MainWindow::hideSearchOverlay() {
 
 
 void MainWindow::applyVolume() {
-    const float vol = m_volumeSlider->value() / 100.0f * m_fadeFactor;
+    const float vol = m_volumePercent / 100.0f * m_fadeFactor;
     if (m_micRouter) m_micRouter->setPlayerVolume(vol);
     if (m_eqActive) {
         m_audioOutput->setVolume(0.0f);
         m_eqEngine->setVolume(vol);
     } else {
-        m_audioOutput->setVolume(vol);
+        m_audioOutput->setVolume(qMin(vol, 1.0f));
     }
+}
+
+void MainWindow::updateWindowsMediaSession()
+{
+    if (!m_windowsMediaSession) return;
+    if (m_currentIndex < 0 || m_currentIndex >= m_playlist.size() ||
+        m_player->source().isEmpty()) {
+        m_windowsMediaSession->setTrack({}, {});
+        return;
+    }
+
+    m_windowsMediaSession->setTrack(m_titleLabel->text(), m_artistLabel->text());
+    WindowsMediaSession::PlaybackState state = WindowsMediaSession::PlaybackState::Stopped;
+    if (m_player->playbackState() == QMediaPlayer::PlayingState)
+        state = WindowsMediaSession::PlaybackState::Playing;
+    else if (m_player->playbackState() == QMediaPlayer::PausedState)
+        state = WindowsMediaSession::PlaybackState::Paused;
+    m_windowsMediaSession->setPlaybackState(state);
 }
 
 void MainWindow::playerSeek(qint64 ms) {
@@ -5955,26 +6085,28 @@ void MainWindow::playerSeek(qint64 ms) {
 }
 
 void MainWindow::stopEqEngine() {
+    const bool wasEqLoading = m_eqLoadingBanner;
     m_eqPending = false;
     m_eqActive = false;
     m_eqSource = QUrl();
     m_eqEngine->stop();
+    if (wasEqLoading) hideLoadingBanner();
     applyVolume();
 }
 
 void MainWindow::syncEqEngineToCurrentTrack() {
     const QUrl src = m_player->source();
-    const bool wantEq = m_cfg.eqEnabled && !src.isEmpty() &&
-                         src.isLocalFile();
-    if (!wantEq) {
+    const bool wantProcessing = (m_cfg.eqEnabled || m_volumePercent > 100) &&
+                                !src.isEmpty() && src.isLocalFile();
+    if (!wantProcessing) {
         const bool wasRunning = m_eqActive || m_eqPending;
         if (m_eqActive || m_eqPending) stopEqEngine();
-        if (m_cfg.eqEnabled && !src.isEmpty()) {
+        if ((m_cfg.eqEnabled || m_volumePercent > 100) && !src.isEmpty()) {
             if (wasRunning)
-                statusBar()->showMessage("Эквалайзер недоступен для этого трека", 3500);
+                statusBar()->showMessage("Обработка звука недоступна для этого потока", 3500);
         } else {
             if (wasRunning && !m_cfg.eqEnabled)
-                statusBar()->showMessage("Эквалайзер выключен", 2000);
+                statusBar()->showMessage("Обработка звука выключена", 2000);
         }
         return;
     }
@@ -5984,7 +6116,12 @@ void MainWindow::syncEqEngineToCurrentTrack() {
     stopEqEngine();
     m_eqSource = src;
     m_eqPending = true;
-    statusBar()->showMessage("Эквалайзер включается — подготовка аудио…");
+    showLoadingBanner(m_cfg.eqEnabled ? "Подготовка эквалайзера — загрузка аудио…"
+                                      : "Подготовка усиления — загрузка аудио…");
+    m_eqLoadingBanner = true;
+    m_loadingBar->setRange(0, 0);
+    m_miniLoadingBar->setRange(0, 0);
+    statusBar()->showMessage("Подготовка обработки аудио…");
     m_eqEngine->setSource(src);
 }
 
@@ -6571,6 +6708,21 @@ bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr
 {
     Q_UNUSED(eventType);
     MSG *msg = static_cast<MSG *>(message);
+    if (msg && msg->message == WindowsMediaSession::ButtonMessage) {
+        switch (static_cast<WindowsMediaSession::Button>(msg->wParam)) {
+        case WindowsMediaSession::Button::Play:
+            if (m_player->playbackState() != QMediaPlayer::PlayingState) togglePlayPause();
+            break;
+        case WindowsMediaSession::Button::Pause:
+            if (m_player->playbackState() == QMediaPlayer::PlayingState) togglePlayPause();
+            break;
+        case WindowsMediaSession::Button::Stop: stop(); break;
+        case WindowsMediaSession::Button::Previous: previous(); break;
+        case WindowsMediaSession::Button::Next: next(); break;
+        }
+        if (result) *result = 0;
+        return true;
+    }
     if (msg && msg->message == WM_HOTKEY && msg->wParam >= 7100 && msg->wParam < 7109) {
         QStringList paths;
         for (const QUrl &url : std::as_const(m_playlist)) {

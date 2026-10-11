@@ -1,4 +1,5 @@
 #include "microuter.h"
+#include "volumerange.h"
 
 #include <QAudioBuffer>
 #include <QAudioBufferOutput>
@@ -11,6 +12,7 @@
 #include <QMediaDevices>
 #include <QTimer>
 #include <QtMath>
+#include <cstring>
 
 MicRouter::MicRouter(QMediaPlayer *sourcePlayer, QObject *parent)
     : QObject(parent), m_sourcePlayer(sourcePlayer)
@@ -21,7 +23,7 @@ MicRouter::MicRouter(QMediaPlayer *sourcePlayer, QObject *parent)
     m_soundBufferOutput = new QAudioBufferOutput(this);
     m_soundPlayer->setAudioBufferOutput(m_soundBufferOutput);
     connect(m_soundBufferOutput, &QAudioBufferOutput::audioBufferReceived,
-            this, &MicRouter::handleAudioBuffer);
+            this, [this](const QAudioBuffer &buffer) { handleAudioBuffer(buffer); });
 
     m_soundMonitorPlayer = new QMediaPlayer(this);
     m_soundMonitorOutput = new QAudioOutput(this);
@@ -256,15 +258,17 @@ void MicRouter::setMusicVolume(float volume)
 
 void MicRouter::setPlayerVolume(float volume)
 {
-    m_playerVolume = qBound(0.0f, volume, 1.0f);
+    m_playerVolume = qBound(0.0f, volume, 10.0f);
     applyMusicVolume();
 }
 
 void MicRouter::applyMusicVolume()
 {
-    const float effective = qBound(0.0f, m_musicVolume * m_playerVolume, 1.0f);
-    if (m_musicSink) m_musicSink->setVolume(effective);
-    if (m_soundOutput) m_soundOutput->setVolume(effective);
+    const float effective = qBound(0.0f, m_musicVolume * m_playerVolume, 10.0f);
+    m_musicSoftwareGain = qMax(1.0f, effective);
+    const float sinkGain = qMin(1.0f, effective);
+    if (m_musicSink) m_musicSink->setVolume(sinkGain);
+    if (m_soundOutput) m_soundOutput->setVolume(sinkGain);
 }
 
 void MicRouter::setVoiceVolume(float volume)
@@ -291,9 +295,19 @@ void MicRouter::feedMusicBuffer(const QAudioBuffer &buffer)
         return;
     }
 
-    const char *data = buffer.constData<char>();
-    m_pendingMusic.append(data, buffer.byteCount());
-    handleAudioBuffer(buffer);
+    if (m_musicSoftwareGain > 1.0f) {
+        QByteArray amplified;
+        amplified.resize(buffer.byteCount());
+        const float *source = buffer.constData<float>();
+        for (qsizetype i = 0; i < buffer.sampleCount(); ++i) {
+            const float sample = clampAudioSample(source[i], m_musicSoftwareGain);
+            std::memcpy(amplified.data() + i * sizeof(float), &sample, sizeof(float));
+        }
+        m_pendingMusic.append(amplified);
+    } else {
+        m_pendingMusic.append(buffer.constData<char>(), buffer.byteCount());
+    }
+    handleAudioBuffer(buffer, m_musicVolume * m_playerVolume);
 
     const qsizetype queued = m_pendingMusic.size() - m_pendingMusicOffset;
     const qsizetype primeBytes = m_musicFormat.bytesForDuration(250000);
@@ -351,7 +365,7 @@ void MicRouter::flushMusicBuffer()
     }
 }
 
-void MicRouter::handleAudioBuffer(const QAudioBuffer &buffer)
+void MicRouter::handleAudioBuffer(const QAudioBuffer &buffer, float gain)
 {
     if (!buffer.isValid() || buffer.sampleCount() <= 0) {
         emit levelChanged(0.0f);
@@ -387,5 +401,5 @@ void MicRouter::handleAudioBuffer(const QAudioBuffer &buffer)
     default:
         break;
     }
-    emit levelChanged(qBound(0.0f, peak, 1.0f));
+    emit levelChanged(qBound(0.0f, peak * gain, 1.0f));
 }

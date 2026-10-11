@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(EchoBoxII VERSION 5.0.0 LANGUAGES CXX)
+project(EchoBoxII VERSION 5.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -47,6 +47,8 @@ qt_add_executable(EchoBoxII
     src/discordrpc.cpp
     src/settingsdialog.h
     src/settingsdialog.cpp
+    src/eqpercent.h
+    src/volumerange.h
     src/waveformslider.h
     src/waveformslider.cpp
     src/waveformcache.h
@@ -59,6 +61,8 @@ qt_add_executable(EchoBoxII
     src/microuter.cpp
     src/micdeckdialog.h
     src/micdeckdialog.cpp
+    src/windowsmediasession.h
+    src/windowsmediasession.cpp
     assets/app_icons.qrc
     ${APP_ICON_SOURCES}
 )
@@ -74,6 +78,20 @@ if(WIN32)
     endif()
 endif()
 
+option(ECHOBOX_BUILD_VOLUME_SMOKE_TEST "Build the amplified volume smoke test" OFF)
+if(ECHOBOX_BUILD_VOLUME_SMOKE_TEST)
+    add_executable(EchoBoxVolumeSmoke tests/volume_smoke.cpp src/audioengine.cpp)
+    target_include_directories(EchoBoxVolumeSmoke PRIVATE src)
+    target_link_libraries(EchoBoxVolumeSmoke PRIVATE Qt6::Core Qt6::Multimedia)
+endif()
+
+option(ECHOBOX_BUILD_EQ_PERCENT_SMOKE_TEST "Build the equalizer percentage smoke test" OFF)
+if(ECHOBOX_BUILD_EQ_PERCENT_SMOKE_TEST)
+    add_executable(EchoBoxEqPercentSmoke tests/eq_percent_smoke.cpp src/audioengine.cpp)
+    target_include_directories(EchoBoxEqPercentSmoke PRIVATE src)
+    target_link_libraries(EchoBoxEqPercentSmoke PRIVATE Qt6::Core Qt6::Multimedia)
+endif()
+
 target_link_libraries(EchoBoxII PRIVATE
     Qt6::Core
     Qt6::Gui
@@ -84,7 +102,7 @@ target_link_libraries(EchoBoxII PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(EchoBoxII PRIVATE ole32 shell32 uuid)
+    target_link_libraries(EchoBoxII PRIVATE ole32 runtimeobject shell32 uuid)
 endif()
 
 target_compile_definitions(EchoBoxII PRIVATE
@@ -110,4 +128,16 @@ if(ECHOBOX_BUILD_MIC_ROUTE_SMOKE_TEST)
         Qt6::Widgets
     )
 
+endif()
+
+option(ECHOBOX_BUILD_WINDOWS_MEDIA_SMOKE_TEST "Build the Windows media controls smoke test" OFF)
+if(WIN32 AND ECHOBOX_BUILD_WINDOWS_MEDIA_SMOKE_TEST)
+    qt_add_executable(EchoBoxWindowsMediaSmoke
+        tests/windows_media_smoke.cpp
+        src/windowsmediasession.cpp
+        src/windowsmediasession.h
+    )
+    target_include_directories(EchoBoxWindowsMediaSmoke PRIVATE src)
+    target_link_libraries(EchoBoxWindowsMediaSmoke PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets ole32 runtimeobject uuid)
 endif()

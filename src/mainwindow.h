@@ -22,6 +22,7 @@
 #include <QFileSystemWatcher>
 #include <QSet>
 #include <functional>
+#include <memory>
 #include "settingsdialog.h"
 #include "waveformslider.h"
 #include "backgroundwidget.h"
@@ -54,6 +55,8 @@ class Visualizer;
 class DiscordRPC;
 class MicRouter;
 class MicDeckDialog;
+class WindowsMediaSession;
+class QSpinBox;
 
 enum class RepeatMode { Off, One, All };
 
@@ -206,6 +209,7 @@ private:
     void    saveTrackPosition();
 
     void applyVolume();
+    void updateWindowsMediaSession();
 
     void updateRepeatButton();
     void updateAlbumArt();
@@ -247,12 +251,14 @@ private:
     QMediaPlayer   *m_player      = nullptr;
     QAudioOutput   *m_audioOutput = nullptr;
     QMediaPlayer   *m_metaReader  = nullptr;
+    std::unique_ptr<WindowsMediaSession> m_windowsMediaSession;
     QList<QUrl>     m_metaScanQueue;
     bool            m_scanInProgress = false;
 
     AudioEngine *m_eqEngine = nullptr;
     bool         m_eqActive = false;
     bool         m_eqPending = false;
+    bool         m_eqLoadingBanner = false;
     QUrl         m_eqSource;
     void syncEqEngineToCurrentTrack();
     void stopEqEngine();
@@ -332,7 +338,8 @@ private:
 
     QToolButton *m_muteBtn      = nullptr;
     QSlider     *m_volumeSlider = nullptr;
-    QLabel      *m_volumeLabel  = nullptr;
+    QSpinBox    *m_volumeSpinBox = nullptr;
+    int          m_volumePercent = 70;
 
     QWidget     *m_miniBar        = nullptr;
     QToolButton *m_miniPrevBtn    = nullptr;

@@ -1,6 +1,6 @@
 #define MyAppName "EchoBox II"
 #ifndef MyAppVersion
-  #define MyAppVersion "5.0.0"
+  #define MyAppVersion "5.1.0"
 #endif
 #define MyAppPublisher "BANANCHIKIREAL"
 #define MyAppURL "https://github.com/BANANCHIKIREAL/EchoBox-II"

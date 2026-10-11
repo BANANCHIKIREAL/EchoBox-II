@@ -3,6 +3,7 @@
 #include "materialicons.h"
 #include "thememanager.h"
 #include "logo.h"
+#include "eqpercent.h"
 #include <QListWidget>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -34,6 +35,7 @@
 #include <QDirIterator>
 #include <QMessageBox>
 #include <QSlider>
+#include <QSpinBox>
 #include <QScrollArea>
 #include <QPainter>
 #include <array>
@@ -588,7 +590,8 @@ void SettingsDialog::buildEqualizerTab(QWidget *tab) {
     l->addWidget(makeHead("Графический эквалайзер",
         "Работает для локальных файлов и треков по ссылке, если в файле\n"
         "есть декодируемая аудиодорожка. При первом включении отдельному\n"
-        "аудио-движку может понадобиться немного времени на подготовку."));
+        "аудио-движку может понадобиться немного времени на подготовку.\n"
+        "100% — без изменения; до 1000% — усиление полосы. Большое усиление может искажать звук."));
 
     m_eqEnabledChk = new QCheckBox("Включить эквалайзер");
     m_eqEnabledChk->setChecked(m_result.eqEnabled);
@@ -598,25 +601,32 @@ void SettingsDialog::buildEqualizerTab(QWidget *tab) {
     l->addWidget(makeSep());
 
     auto *bandsRow = new QHBoxLayout;
-    bandsRow->setSpacing(10);
+    bandsRow->setSpacing(4);
     for (int i = 0; i < kEqBandCount; ++i) {
         auto *col = new QVBoxLayout;
         col->setSpacing(4);
 
-        auto *valLbl = new QLabel("0 дБ");
-        valLbl->setAlignment(Qt::AlignHCenter);
-        valLbl->setStyleSheet("color:#a6adc8;font-size:11px;");
-        m_eqValueLabels[i] = valLbl;
+        auto *percentSpin = new QSpinBox;
+        percentSpin->setRange(1, 1000);
+        percentSpin->setSuffix("%");
+        percentSpin->setAlignment(Qt::AlignCenter);
+        percentSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+        percentSpin->setFixedWidth(60);
+        percentSpin->setValue(eqGainToPercent(m_result.eqBands[i]));
+        m_eqPercentSpins[i] = percentSpin;
 
         auto *slider = new QSlider(Qt::Vertical);
-        slider->setRange(-12, 12);
-        slider->setValue(int(m_result.eqBands[i]));
+        slider->setRange(1, 1000);
+        slider->setValue(percentSpin->value());
         slider->setFixedHeight(120);
         slider->setToolTip(QString("%1 Гц").arg(kEqBandFreqs[i]));
         m_eqSliders[i] = slider;
-        connect(slider, &QSlider::valueChanged, this, [this, i](int v) {
-            m_eqValueLabels[i]->setText(QString("%1 дБ").arg(v));
-            m_result.eqBands[i] = float(v);
+        connect(slider, &QSlider::valueChanged, percentSpin, &QSpinBox::setValue);
+        connect(percentSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+                [this, i, slider](int percent) {
+            const QSignalBlocker blocker(slider);
+            slider->setValue(percent);
+            m_result.eqBands[i] = eqPercentToGain(percent);
             liveApply();
         });
 
@@ -626,7 +636,7 @@ void SettingsDialog::buildEqualizerTab(QWidget *tab) {
         freqLbl->setAlignment(Qt::AlignHCenter);
         freqLbl->setStyleSheet("color:#6c7086;font-size:11px;");
 
-        col->addWidget(valLbl);
+        col->addWidget(percentSpin, 0, Qt::AlignHCenter);
         col->addWidget(slider, 0, Qt::AlignHCenter);
         col->addWidget(freqLbl);
         bandsRow->addLayout(col);
@@ -659,11 +669,12 @@ void SettingsDialog::buildEqualizerTab(QWidget *tab) {
 
 void SettingsDialog::setEqPreset(const float (&gains)[kEqBandCount]) {
     for (int i = 0; i < kEqBandCount; ++i) {
-        const QSignalBlocker blocker(m_eqSliders[i]);
-        const int value = int(gains[i]);
-        m_eqSliders[i]->setValue(value);
-        m_eqValueLabels[i]->setText(QString("%1 дБ").arg(value));
-        m_result.eqBands[i] = float(value);
+        const QSignalBlocker sliderBlocker(m_eqSliders[i]);
+        const QSignalBlocker spinBlocker(m_eqPercentSpins[i]);
+        const int percent = eqGainToPercent(gains[i]);
+        m_eqSliders[i]->setValue(percent);
+        m_eqPercentSpins[i]->setValue(percent);
+        m_result.eqBands[i] = eqPercentToGain(percent);
     }
     liveApply();
 }

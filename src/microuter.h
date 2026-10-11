@@ -46,7 +46,7 @@ private:
     QAudioDevice findInput(const QByteArray &id) const;
     QAudioFormat commonFormat(const QAudioDevice &input,
                               const QAudioDevice &output) const;
-    void handleAudioBuffer(const QAudioBuffer &buffer);
+    void handleAudioBuffer(const QAudioBuffer &buffer, float gain = 1.0f);
     void flushMusicBuffer();
     void applyMusicVolume();
 
@@ -70,6 +70,7 @@ private:
     QString m_activeSound;
     float m_musicVolume = 0.9f;
     float m_playerVolume = 1.0f;
+    float m_musicSoftwareGain = 1.0f;
     float m_voiceVolume = 1.0f;
     float m_monitorVolume = 0.7f;
     bool m_monitorEnabled = false;
